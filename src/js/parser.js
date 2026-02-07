@@ -1413,6 +1413,60 @@ let codeMirrorFn = function () {
                 case 'levels':
                     {
                         if (sol) {
+                            // allow legend-style lines inside levels using word-based parsing
+                            let legendLineMatch = stream.string.match(/^\s*[\p{L}\p{N}_]+\s*=/u);
+                            if (legendLineMatch) {
+                                let rhsMatch = stream.string.match(/^\s*[\p{L}\p{N}_]+\s*=\s*(.*)$/u);
+                                let rhs = rhsMatch ? rhsMatch[1] : "";
+                                if (rhs.trim().length === 0) {
+                                    // incomplete legend line; consume line to avoid level parsing
+                                    stream.skipToEnd();
+                                    return 'LEGEND';
+                                }
+
+                                let remainder = stream.string.trim();
+                                let legendTokens = [];
+                                while (remainder.length > 0) {
+                                    let ws = remainder.match(/^[\p{Z}\s]+/u);
+                                    if (ws) {
+                                        remainder = remainder.slice(ws[0].length);
+                                        continue;
+                                    }
+                                    if (remainder[0] === '=') {
+                                        legendTokens.push('=');
+                                        remainder = remainder.slice(1);
+                                        continue;
+                                    }
+                                    let wordMatch = remainder.match(/^[\p{L}\p{N}_]+/u);
+                                    if (wordMatch) {
+                                        legendTokens.push(wordMatch[0].toLowerCase());
+                                        remainder = remainder.slice(wordMatch[0].length);
+                                        continue;
+                                    }
+                                    break;
+                                }
+
+                                state.current_line_wip_array = legendTokens;
+                                if (legendTokens.length >= 3 && legendTokens.indexOf('=') !== -1) {
+                                    processLegendLine(state, mixedCase);
+                                    // update glyphs/abbreviations for immediate use
+                                    if (legendTokens[0] && legendTokens[0].length === 1 && state.abbrevNames.indexOf(legendTokens[0]) === -1) {
+                                        state.abbrevNames.push(legendTokens[0]);
+                                    }
+                                }
+
+                                // store legend line in levels so compiler can process it
+                                let legendLine = stream.string.trim();
+                                if (state.levels[state.levels.length - 1].length === 0) {
+                                    state.levels.splice(state.levels.length - 1, 0, [state.lineNumber, legendLine]);
+                                } else {
+                                    state.levels.push([state.lineNumber, legendLine]);
+                                }
+
+                                stream.skipToEnd();
+                                return 'LEGEND';
+                            }
+
                             if (stream.match(/[\p{Z}\s]*message\b[\p{Z}\s]*/u, true)) {
                                 state.tokenIndex = -4;//-4/2 = message/level
                                 let newdat = ['\n', mixedCase.slice(stream.pos).trim(), state.lineNumber];
