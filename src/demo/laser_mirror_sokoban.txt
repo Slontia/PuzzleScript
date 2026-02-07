@@ -1,0 +1,531 @@
+title 激光反射推箱子
+author GitHub Copilot
+homepage www.puzzlescript.net
+run_rules_on_level_start
+
+========
+OBJECTS
+========
+
+Background
+lightblue darkblue
+11111
+11111
+11111
+11111
+11111
+
+Wall
+#444444 #222222
+00000
+01110
+01110
+01110
+00000
+
+Player
+red pink white black
+.000.
+.111.
+22222
+.333.
+.3.3.
+
+DeadPlayer
+black grey
+.000.
+.000.
+00000
+.000.
+.0.0.
+
+Box
+brown orange
+00000
+01110
+01110
+01110
+00000
+
+(Receiver)
+
+ReceiverOffR
+#00cc66
+.....
+0....
+.....
+.....
+.....
+
+ReceiverOffL
+#00cc66
+.....
+.....
+.....
+....0
+.....
+
+ReceiverOffU
+#00cc66
+.....
+.....
+.....
+.....
+...0.
+
+ReceiverOffD
+#00cc66
+.0...
+.....
+.....
+.....
+.....
+
+ReceiverOnR
+red
+.....
+0....
+.....
+.....
+.....
+
+ReceiverOnL
+red
+.....
+.....
+.....
+....0
+.....
+
+ReceiverOnU
+red
+.....
+.....
+.....
+.....
+...0.
+
+ReceiverOnD
+red
+.0...
+.....
+.....
+.....
+.....
+
+(Mirror Slash)
+
+MirrorSlashLU
+red #55c6ff
+.....
+....1
+...11
+..111
+.1111
+
+MirrorSlashLaserRU
+red #55c6ff
+...0.
+00001
+...11
+..111
+.1111
+
+MirrorSlashLaserDL
+red #55c6ff
+.0...
+.0..1
+.0.11
+00111
+.1111
+
+MirrorSlashLaserFullLU
+red #55c6ff
+.0.0.
+00001
+.0.11
+00111
+.1111
+
+MirrorSlashRD
+red #55c6ff
+1111.
+111..
+11...
+1....
+.....
+
+MirrorSlashLaserLD
+red #55c6ff
+1111.
+111..
+11...
+10000
+.0...
+
+MirrorSlashLaserUR
+red #55c6ff
+1111.
+11100
+11.0.
+1..0.
+...0.
+
+MirrorSlashLaserFullRD
+red #55c6ff
+1111.
+11100
+11.0.
+10000
+.0.0.
+
+MirrorSlashLD
+red #55c6ff
+.1111
+..111
+...11
+....1
+.....
+
+MirrorSlashLaserRD
+red #55c6ff
+.1111
+00111
+.0.11
+.0..1
+.0...
+
+MirrorSlashLaserUL
+red #55c6ff
+.1111
+..111
+...11
+00001
+...0.
+
+MirrorSlashLaserFullLD
+red #55c6ff
+.1111
+00111
+.0.11
+00001
+.0.0.
+
+MirrorSlashRU
+red #55c6ff
+.....
+1....
+11...
+111..
+1111.
+
+MirrorSlashLaserLU
+red #55c6ff
+...0.
+1..0.
+11.0.
+11100
+1111.
+
+MirrorSlashLaserDR
+red #55c6ff
+.0...
+10000
+11...
+111..
+1111.
+
+MirrorSlashLaserFullRU
+red #55c6ff
+.0.0.
+10000
+11.0.
+11100
+1111.
+
+MirrorSlashD
+red #55c6ff
+11111
+11111
+11.11
+1...1
+.....
+
+MirrorSlashLaserUD
+red #55c6ff
+11111
+11111
+11.11
+10001
+.0.0.
+
+MirrorSlashU
+red #55c6ff
+.....
+1...1
+11.11
+11111
+11111
+
+MirrorSlashLaserDU
+red #55c6ff
+.0.0.
+10001
+11.11
+11111
+11111
+
+MirrorSlashR
+red #55c6ff
+1111.
+111..
+11...
+111..
+1111.
+
+MirrorSlashLaserLR
+red #55c6ff
+1111.
+11100
+11.0.
+11100
+1111.
+
+MirrorSlashL
+red #55c6ff
+.1111
+..111
+...11
+..111
+.1111
+
+
+MirrorSlashLaserRL
+red #55c6ff
+.1111
+00111
+.0.11
+00111
+.1111
+
+(Emitter)
+
+EmitterRight
+yellow red
+00000
+00111
+00110
+00000
+00000
+
+EmitterLeft
+yellow red
+00000
+00000
+01100
+11100
+00000
+
+EmitterUp
+yellow red
+00010
+00110
+00110
+00000
+00000
+
+EmitterDown
+yellow red
+00000
+00000
+01100
+01100
+01000
+
+(LaserBeam)
+
+LaserBeamR
+red orange
+.....
+00000
+.....
+.....
+.....
+
+LaserBeamL
+red orange
+.....
+.....
+.....
+00000
+.....
+
+LaserBeamU
+red orange
+...0.
+...0.
+...0.
+...0.
+...0.
+
+LaserBeamD
+red orange
+.0...
+.0...
+.0...
+.0...
+.0...
+
+
+=======
+LEGEND
+=======
+
+. = Background
+# = Wall
+X = ReceiverOffD and Wall
+P = Player
+B = Box
+
+(Receivers)
+ReceiverOff_Set = ReceiverOffR or ReceiverOffL or ReceiverOffU or ReceiverOffD
+ReceiverOn_Set = ReceiverOnR or ReceiverOnL or ReceiverOnU or ReceiverOnD
+Receiver_Set = ReceiverOff_Set or ReceiverOn_Set
+
+(Mirror Slashes)
+M = MirrorSlashRU
+N = MirrorSlashRD
+J = MirrorSlashLU
+K = MirrorSlashLD
+MirrorSlashRU_Set = MirrorSlashRU or MirrorSlashLaserDR or MirrorSlashLaserLU or MirrorSlashLaserFullRU
+MirrorSlashLU_Set = MirrorSlashLU or MirrorSlashLaserDL or MirrorSlashLaserRU or MirrorSlashLaserFullLU
+MirrorSlashRD_Set = MirrorSlashRD or MirrorSlashLaserUR or MirrorSlashLaserLD or MirrorSlashLaserFullRD
+MirrorSlashLD_Set = MirrorSlashLD or MirrorSlashLaserUL or MirrorSlashLaserRD or MirrorSlashLaserFullLD
+MirrorSlashD_Set = MirrorSlashD or MirrorSlashLaserUD
+MirrorSlashU_Set = MirrorSlashU or MirrorSlashLaserDU
+MirrorSlashR_Set = MirrorSlashR or MirrorSlashLaserLR
+MirrorSlashL_Set = MirrorSlashL or MirrorSlashLaserRL
+MirrorSlash_Set = MirrorSlashRU_Set or MirrorSlashRD_Set or MirrorSlashLU_Set or MirrorSlashLD_Set or MirrorSlashD_Set or MirrorSlashU_Set or MirrorSlashR_Set or MirrorSlashL_Set
+
+(Emitters)
+r = EmitterRight
+l = EmitterLeft
+u = EmitterUp
+d = EmitterDown
+Emitter_Set = EmitterRight or EmitterLeft or EmitterUp or EmitterDown
+
+LaserSourceR = LaserBeamR or EmitterRight or MirrorSlashLaserUR or MirrorSlashLaserDR or MirrorSlashLaserFullRD or MirrorSlashLaserFullRU
+LaserSourceL = LaserBeamL or EmitterLeft or MirrorSlashLaserDL or MirrorSlashLaserUL or MirrorSlashLaserFullLU or MirrorSlashLaserFullLD
+LaserSourceU = LaserBeamU or EmitterUp or MirrorSlashLaserRU or MirrorSlashLaserLU or MirrorSlashLaserFullRU or MirrorSlashLaserFullLU
+LaserSourceD = LaserBeamD or EmitterDown or MirrorSlashLaserRD or MirrorSlashLaserLD or MirrorSlashLaserFullRD or MirrorSlashLaserFullLD
+
+Movable_Set = Box or MirrorSlash_Set or Emitter_Set
+Unmovable_Set = Wall
+Beam = LaserBeamR or LaserBeamL or LaserBeamU or LaserBeamD
+
+=======
+SOUNDS
+=======
+
+Movable_Set move 36772507
+Player move 98852907
+DeadPlayer create 66029702
+ReceiverOn_Set create 93167306
+ReceiverOff_Set create 38016901
+
+================
+COLLISIONLAYERS
+================
+
+Background
+Player, DeadPlayer, Movable_Set, Unmovable_Set
+LaserBeamU,
+LaserBeamD,
+LaserBeamL,
+LaserBeamR,
+Receiver_Set
+
+======
+RULES
+======
+
+[ > Player | Movable_Set ] -> [ > Player | > Movable_Set ]
+
+late [ Beam ] -> [ ]
+late [ MirrorSlashRD_Set ] -> [ MirrorSlashRD ]
+late [ MirrorSlashLD_Set ] -> [ MirrorSlashLD ]
+late [ MirrorSlashRU_Set ] -> [ MirrorSlashRU ]
+late [ MirrorSlashLU_Set ] -> [ MirrorSlashLU ]
+
+startloop
+
+(pass laser beam)
+late right [ LaserSourceR | no LaserBeamR no Movable_Set no Unmovable_Set ] -> [ LaserSourceR | LaserBeamR ]
+late left [ LaserSourceL | no LaserBeamL no Movable_Set no Unmovable_Set ] -> [ LaserSourceL | LaserBeamL ]
+late up [ LaserSourceU | no LaserBeamU no Movable_Set no Unmovable_Set ] -> [ LaserSourceU | LaserBeamU ]
+late down [ LaserSourceD | no LaserBeamD no Movable_Set no Unmovable_Set ] -> [ LaserSourceD | LaserBeamD ]
+
+(reflect laser beam)
+late right [ LaserSourceR | MirrorSlashLD ] -> [ LaserSourceR | MirrorSlashLaserRD ]
+late right [ LaserSourceR | MirrorSlashLU ] -> [ LaserSourceR | MirrorSlashLaserRU ]
+late left [ LaserSourceL | MirrorSlashRD ] -> [ LaserSourceL | MirrorSlashLaserLD ]
+late left [ LaserSourceL | MirrorSlashRU ] -> [ LaserSourceL | MirrorSlashLaserLU ]
+late up [ LaserSourceU | MirrorSlashRD ] -> [ LaserSourceU | MirrorSlashLaserUR ]
+late up [ LaserSourceU | MirrorSlashLD ] -> [ LaserSourceU | MirrorSlashLaserUL ]
+late down [ LaserSourceD | MirrorSlashRU ] -> [ LaserSourceD | MirrorSlashLaserDR ]
+late down [ LaserSourceD | MirrorSlashLU ] -> [ LaserSourceD | MirrorSlashLaserDL ]
+late right [ LaserSourceR | MirrorSlashLaserDL ] -> [ LaserSourceR | MirrorSlashLaserFullLU ]
+late right [ LaserSourceR | MirrorSlashLaserUL ] -> [ LaserSourceR | MirrorSlashLaserFullLD ]
+late left [ LaserSourceL | MirrorSlashLaserDR ] -> [ LaserSourceL | MirrorSlashLaserFullRU ]
+late left [ LaserSourceL | MirrorSlashLaserUR ] -> [ LaserSourceL | MirrorSlashLaserFullRD ]
+late down [ LaserSourceD | MirrorSlashLaserLU ] -> [ LaserSourceD | MirrorSlashLaserFullRU ]
+late down [ LaserSourceD | MirrorSlashLaserRU ] -> [ LaserSourceD | MirrorSlashLaserFullLU ]
+late up [ LaserSourceU | MirrorSlashLaserLD ] -> [ LaserSourceU | MirrorSlashLaserFullRD ]
+late up [ LaserSourceU | MirrorSlashLaserRD ] -> [ LaserSourceU | MirrorSlashLaserFullLD ]
+
+(switch receiver)
+late right [ LaserSourceR | ReceiverOffR ] -> [ LaserSourceR | ReceiverOnR ]
+late left [ LaserSourceL | ReceiverOffL ] -> [ LaserSourceL | ReceiverOnL ]
+late down [ LaserSourceD | ReceiverOffD ] -> [ LaserSourceD | ReceiverOnD ]
+late up [ LaserSourceU | ReceiverOffU ] -> [ LaserSourceU | ReceiverOnU ]
+late right [ no LaserSourceR | ReceiverOnR ] -> [ no LaserSourceR | ReceiverOffR ]
+late left [ no LaserSourceL | ReceiverOnL ] -> [ no LaserSourceL | ReceiverOffL ]
+late down [ no LaserSourceD | ReceiverOnD ] -> [ no LaserSourceD | ReceiverOffD ]
+late up [ no LaserSourceU | ReceiverOnU ] -> [ no LaserSourceU | ReceiverOffU ]
+
+endloop
+
+late [ Player Beam ] -> [ DeadPlayer Beam ]
+
+==============
+WINCONDITIONS
+==============
+
+no ReceiverOff_Set
+
+=======
+LEVELS
+=======
+
+###########
+#P....B...#
+#.r....M.X#
+#.....#...#
+#.....#...#
+#...N.....#
+#.....u...#
+#.....#...#
+#.....#...#
+#...X.....#
+###########
+
+###########
+#P....B...#
+#..r..M..X#
+#.....#...#
+#..N..#...#
+#.....#...#
+#...d.....#
+#.....#...#
+#..X..#...#
+###########

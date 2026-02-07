@@ -24,6 +24,10 @@ function colorToHex(palette, str) {
 
 function generateSpriteMatrix(dat) {
 
+    if (dat.length > 0 && Array.isArray(dat[0])) {
+        return dat;
+    }
+
     let result = [];
     for (let i = 0; i < dat.length; i++) {
         let row = [];
@@ -465,8 +469,24 @@ function levelsToArray(state) {
         if (level.length === 0) {
             continue;
         }
+        // 检查是否为 legend 行（如 A = ...）
+        if (typeof level[1] === 'string' && /^\s*([A-Za-z0-9_]+)\s*=.*$/.test(level[1])) {
+            // 解析 legend 行
+            if (typeof processLegendLine === 'function') {
+                state.current_line_wip_array = level[1].split(/\s+/);
+                processLegendLine(state, level[1]);
+            } else if (typeof window !== 'undefined' && window.processLegendLine) {
+                state.current_line_wip_array = level[1].split(/\s+/);
+                window.processLegendLine(state, level[1]);
+            }
+            if (typeof generateExtraMembers === 'function') {
+                generateExtraMembers(state);
+            } else if (typeof window !== 'undefined' && window.generateExtraMembers) {
+                window.generateExtraMembers(state);
+            }
+            continue;
+        }
         if (level[0] === '\n') {
-
             let o = {
                 message: level[1]
             };
@@ -474,13 +494,11 @@ function levelsToArray(state) {
             if (splitMessage.length > 12) {
                 logWarning('Message too long to fit on screen.', level[2]);
             }
-
             processedLevels.push(o);
         } else {
             let o = levelFromString(state, level);
             processedLevels.push(o);
         }
-
     }
 
     state.levels = processedLevels;
