@@ -415,6 +415,121 @@ let codeMirrorFn = function () {
         }
     }
 
+    function tokenizeLegendLine(stream, state, mixedCase, shouldProcess, suppressErrors) {
+        let resultToken = "";
+        let match_name = null;
+        if (state.tokenIndex === 0) {
+            match_name = stream.match(/[^=\p{Z}\s\(]*(\p{Z}\s)*/u, true);
+            let new_name = match_name[0].trim();
+
+            if (wordAlreadyDeclared(state, new_name)) {
+                resultToken = 'ERROR';
+            } else {
+                resultToken = 'NAME';
+            }
+
+            //if name already declared, we have a problem
+            state.tokenIndex++;
+        } else if (state.tokenIndex === 1) {
+            match_name = stream.match(/=/u, true);
+            if (match_name === null || match_name[0].trim() !== "=") {
+                if (!suppressErrors) {
+                    logError(`In the legend, define new items using the equals symbol - declarations must look like "A = B", "A = B or C [ or D ...]", "A = B and C [ and D ...]".`, state.lineNumber);
+                }
+                stream.match(reg_notcommentstart, true);
+                resultToken = 'ERROR';
+                match_name = ["ERROR"];//just to reduce the chance of crashes
+            }
+            stream.match(/[\p{Z}\s]*/u, true);
+            state.tokenIndex++;
+            resultToken = 'ASSIGNMENT';
+        } else if (state.tokenIndex >= 3 && ((state.tokenIndex % 2) === 1)) {
+            //matches AND/OR
+            match_name = stream.match(reg_name, true);
+            if (match_name === null) {
+                if (!suppressErrors) {
+                    logError("Something bad's happening in the LEGEND", state.lineNumber);
+                }
+                stream.match(reg_notcommentstart, true);
+                resultToken = 'ERROR';
+            } else {
+                let candname = match_name[0].trim();
+                if (candname === "and" || candname === "or") {
+                    resultToken = 'LOGICWORD';
+                    if (state.tokenIndex >= 5) {
+                        if (candname !== state.current_line_wip_array[3]) {
+                            if (!suppressErrors) {
+                                logError("Hey! You can't go mixing ANDs and ORs in a single legend entry.", state.lineNumber);
+                            }
+                            resultToken = 'ERROR';
+                        }
+                    }
+                } else {
+                    if (!suppressErrors) {
+                        logError(`Expected and 'AND' or an 'OR' here, but got ${candname.toUpperCase()} instead. In the legend, define new items using the equals symbol - declarations must look like 'A = B' or 'A = B and C' or 'A = B or C'.`, state.lineNumber);
+                    }
+                    resultToken = 'ERROR';
+                }
+            }
+            state.tokenIndex++;
+        }
+        else {
+            match_name = stream.match(reg_name, true);
+            if (match_name === null) {
+                if (!suppressErrors) {
+                    logError("Something bad's happening in the LEGEND", state.lineNumber);
+                }
+                stream.match(reg_notcommentstart, true);
+                resultToken = 'ERROR';
+            } else {
+                let candname = match_name[0].trim();
+                if (wordAlreadyDeclared(state, candname)) {
+                    resultToken = 'NAME';
+                } else {
+                    resultToken = 'ERROR';
+                }
+                state.tokenIndex++;
+
+            }
+        }
+
+        if (match_name !== null) {
+            state.current_line_wip_array.push(match_name[0].trim());
+        }
+
+        if (stream.eol()) {
+            if (shouldProcess) {
+                processLegendLine(state, mixedCase);
+            }
+            if (!shouldProcess) {
+                // Store legend line in levels for compiler processing
+                let legendLine = mixedCase.trim();
+                if (legendLine.length > 0) {
+                    // Check if this line has a complete legend definition (name = ...)
+                    if (state.current_line_wip_array.length >= 3 && state.current_line_wip_array.indexOf('=') !== -1) {
+                        if (state.levels[state.levels.length - 1].length === 0) {
+                            state.levels.splice(state.levels.length - 1, 0, [state.lineNumber, legendLine]);
+                        } else {
+                            state.levels.push([state.lineNumber, legendLine]);
+                        }
+                        
+                        // Update abbrevNames immediately so the character can be used in subsequent level lines
+                        let legendName = state.current_line_wip_array[0];
+                        if (legendName && legendName.length === 1 && state.abbrevNames.indexOf(legendName) === -1) {
+                            state.abbrevNames.push(legendName);
+                        }
+                    }
+                }
+            }
+            // Reset for next line (both legend and levels)
+            state.levels_legend_line = false;
+            state.tokenIndex = 0;
+            state.current_line_wip_array = [];
+        }
+
+        return resultToken;
+    }
+
     function processSoundsLine(state) {
         if (state.current_line_wip_array.length === 0) {
             return;
@@ -908,83 +1023,7 @@ let codeMirrorFn = function () {
                     }
                 case 'legend':
                     {
-                        let resultToken = "";
-                        let match_name = null;
-                        if (state.tokenIndex === 0) {
-                            match_name = stream.match(/[^=\p{Z}\s\(]*(\p{Z}\s)*/u, true);
-                            let new_name = match_name[0].trim();
-
-                            if (wordAlreadyDeclared(state, new_name)) {
-                                resultToken = 'ERROR';
-                            } else {
-                                resultToken = 'NAME';
-                            }
-
-                            //if name already declared, we have a problem                            
-                            state.tokenIndex++;
-                        } else if (state.tokenIndex === 1) {
-                            match_name = stream.match(/=/u, true);
-                            if (match_name === null || match_name[0].trim() !== "=") {
-                                logError(`In the legend, define new items using the equals symbol - declarations must look like "A = B", "A = B or C [ or D ...]", "A = B and C [ and D ...]".`, state.lineNumber);
-                                stream.match(reg_notcommentstart, true);
-                                resultToken = 'ERROR';
-                                match_name = ["ERROR"];//just to reduce the chance of crashes
-                            }
-                            stream.match(/[\p{Z}\s]*/u, true);
-                            state.tokenIndex++;
-                            resultToken = 'ASSIGNMENT';
-                        } else if (state.tokenIndex >= 3 && ((state.tokenIndex % 2) === 1)) {
-                            //matches AND/OR
-                            match_name = stream.match(reg_name, true);
-                            if (match_name === null) {
-                                logError("Something bad's happening in the LEGEND", state.lineNumber);
-                                let match = stream.match(reg_notcommentstart, true);
-                                resultToken = 'ERROR';
-                            } else {
-                                let candname = match_name[0].trim();
-                                if (candname === "and" || candname === "or") {
-                                    resultToken = 'LOGICWORD';
-                                    if (state.tokenIndex >= 5) {
-                                        if (candname !== state.current_line_wip_array[3]) {
-                                            logError("Hey! You can't go mixing ANDs and ORs in a single legend entry.", state.lineNumber);
-                                            resultToken = 'ERROR';
-                                        }
-                                    }
-                                } else {
-                                    logError(`Expected and 'AND' or an 'OR' here, but got ${candname.toUpperCase()} instead. In the legend, define new items using the equals symbol - declarations must look like 'A = B' or 'A = B and C' or 'A = B or C'.`, state.lineNumber);
-                                    resultToken = 'ERROR';
-                                    // match_name=["and"];//just to reduce the chance of crashes
-                                }
-                            }
-                            state.tokenIndex++;
-                        }
-                        else {
-                            match_name = stream.match(reg_name, true);
-                            if (match_name === null) {
-                                logError("Something bad's happening in the LEGEND", state.lineNumber);
-                                let match = stream.match(reg_notcommentstart, true);
-                                resultToken = 'ERROR';
-                            } else {
-                                let candname = match_name[0].trim();
-                                if (wordAlreadyDeclared(state, candname)) {
-                                    resultToken = 'NAME';
-                                } else {
-                                    resultToken = 'ERROR';
-                                }
-                                state.tokenIndex++;
-
-                            }
-                        }
-
-                        if (match_name !== null) {
-                            state.current_line_wip_array.push(match_name[0].trim());
-                        }
-
-                        if (stream.eol()) {
-                            processLegendLine(state, mixedCase);
-                        }
-
-                        return resultToken;
+                        return tokenizeLegendLine(stream, state, mixedCase, true, false);
                         break;
                     }
                 case 'sounds':
@@ -1413,60 +1452,24 @@ let codeMirrorFn = function () {
                 case 'levels':
                     {
                         if (sol) {
-                            // allow legend-style lines inside levels using word-based parsing
+                            // Detect if this is a legend-style line (has "=" with word = ...)
                             let legendLineMatch = stream.string.match(/^\s*[\p{L}\p{N}_]+\s*=/u);
                             if (legendLineMatch) {
-                                let rhsMatch = stream.string.match(/^\s*[\p{L}\p{N}_]+\s*=\s*(.*)$/u);
-                                let rhs = rhsMatch ? rhsMatch[1] : "";
-                                if (rhs.trim().length === 0) {
-                                    // incomplete legend line; consume line to avoid level parsing
-                                    stream.skipToEnd();
-                                    return 'LEGEND';
-                                }
-
-                                let remainder = stream.string.trim();
-                                let legendTokens = [];
-                                while (remainder.length > 0) {
-                                    let ws = remainder.match(/^[\p{Z}\s]+/u);
-                                    if (ws) {
-                                        remainder = remainder.slice(ws[0].length);
-                                        continue;
-                                    }
-                                    if (remainder[0] === '=') {
-                                        legendTokens.push('=');
-                                        remainder = remainder.slice(1);
-                                        continue;
-                                    }
-                                    let wordMatch = remainder.match(/^[\p{L}\p{N}_]+/u);
-                                    if (wordMatch) {
-                                        legendTokens.push(wordMatch[0].toLowerCase());
-                                        remainder = remainder.slice(wordMatch[0].length);
-                                        continue;
-                                    }
-                                    break;
-                                }
-
-                                state.current_line_wip_array = legendTokens;
-                                if (legendTokens.length >= 3 && legendTokens.indexOf('=') !== -1) {
-                                    processLegendLine(state, mixedCase);
-                                    // update glyphs/abbreviations for immediate use
-                                    if (legendTokens[0] && legendTokens[0].length === 1 && state.abbrevNames.indexOf(legendTokens[0]) === -1) {
-                                        state.abbrevNames.push(legendTokens[0]);
-                                    }
-                                }
-
-                                // store legend line in levels so compiler can process it
-                                let legendLine = stream.string.trim();
-                                if (state.levels[state.levels.length - 1].length === 0) {
-                                    state.levels.splice(state.levels.length - 1, 0, [state.lineNumber, legendLine]);
-                                } else {
-                                    state.levels.push([state.lineNumber, legendLine]);
-                                }
-
-                                stream.skipToEnd();
-                                return 'LEGEND';
+                                state.levels_legend_line = true;
+                                state.tokenIndex = 0;  // Reset for legend tokenization
+                                // Fall through to process first token
+                            } else {
+                                state.levels_legend_line = false;
                             }
+                        }
 
+                        // If processing a legend line, use legend tokenizer
+                        if (state.levels_legend_line) {
+                            return tokenizeLegendLine(stream, state, mixedCase, false, true);
+                        }
+
+                        // Non-legend line processing
+                        if (sol) {
                             if (stream.match(/[\p{Z}\s]*message\b[\p{Z}\s]*/u, true)) {
                                 state.tokenIndex = -4;//-4/2 = message/level
                                 let newdat = ['\n', mixedCase.slice(stream.pos).trim(), state.lineNumber];
@@ -1488,6 +1491,11 @@ let codeMirrorFn = function () {
                                 }
                                 return 'MESSAGE_VERB';
                             } else {
+                                // if the line contains whitespace, highlight as legend-style line
+                                if (/[\p{Z}\s]/u.test(stream.string)) {
+                                    stream.skipToEnd();
+                                    return 'LEGEND';
+                                }
                                 let matches = stream.match(reg_notcommentstart, false);
                                 if (matches === null || matches.length === 0) {
                                     //not sure if it's possible to get here.
@@ -1519,6 +1527,11 @@ let codeMirrorFn = function () {
                             if (state.tokenIndex == -4) {
                                 stream.skipToEnd();
                                 return 'MESSAGE';
+                            }
+                            
+                            // Continue processing legend line if we're in one
+                            if (state.levels_legend_line) {
+                                return tokenizeLegendLine(stream, state, mixedCase, false, true);
                             }
                         }
 
@@ -1691,7 +1704,9 @@ let codeMirrorFn = function () {
 
                 levels: [[]],
 
-                subsection: ''
+                subsection: '',
+
+                levels_legend_line: false
             };
         }
     };

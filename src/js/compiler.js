@@ -459,6 +459,84 @@ function levelFromString(state, level) {
     }
     return o;
 }
+
+// Process legend lines that appear in the levels section
+// Must be called BEFORE generateExtraMembers so glyphDict includes all legend definitions
+function preprocessLegendLinesInLevels(state) {
+    if (!state.levels || state.levels.length === 0) {
+        return;
+    }
+
+    // Ensure legend arrays are initialized
+    if (!state.legend_synonyms) state.legend_synonyms = [];
+    if (!state.legend_aggregates) state.legend_aggregates = [];
+    if (!state.legend_properties) state.legend_properties = [];
+    if (!state.original_case_names) state.original_case_names = {};
+    if (!state.original_line_numbers) state.original_line_numbers = {};
+
+    for (let i = 0; i < state.levels.length; i++) {
+        let level = state.levels[i];
+        if (!level || level.length === 0 || typeof level[1] !== 'string') {
+            continue;
+        }
+
+        // Check if this is a legend line (A = ...)
+        if (/^\s*([A-Za-z0-9_]+)\s*=.*$/.test(level[1])) {
+            let legendLine = level[1].trim();
+            let mixedCaseLine = legendLine;
+            
+            // Parse the legend line into tokens, converting to lowercase
+            let tokens = legendLine.split(/\s+/).map(t => t.toLowerCase());
+            state.current_line_wip_array = tokens;
+            
+            // Store line number for error reporting
+            state.lineNumber = level[0];
+            
+            // Process as a legend line
+            if (tokens.length >= 3 && tokens[1] === '=') {
+                let candname = tokens[0];
+                
+                // Register original case name
+                function escapeRegExp(str) {
+                    return str.replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
+                }
+                let nameFinder = new RegExp("\\b" + escapeRegExp(candname) + "\\b", "i");
+                let match = mixedCaseLine.match(nameFinder);
+                if (match != null) {
+                    state.original_case_names[candname] = match[0];
+                    state.original_line_numbers[candname] = state.lineNumber;
+                }
+                
+                // Add to appropriate legend array
+                if (tokens.length === 3) {
+                    // SYNONYM: A = B
+                    let synonym = [tokens[0], tokens[2]];
+                    synonym.lineNumber = state.lineNumber;
+                    state.legend_synonyms.push(synonym);
+                } else if (tokens.length > 3 && tokens[3] === 'and') {
+                    // AGGREGATE: A = B and C [ and D ...]
+                    // tokens = [name, '=', item1, 'and', item2, 'and', item3, ...]
+                    let newlegend = [tokens[0]];
+                    for (let j = 2; j < tokens.length; j += 2) {
+                        newlegend.push(tokens[j]);
+                    }
+                    newlegend.lineNumber = state.lineNumber;
+                    state.legend_aggregates.push(newlegend);
+                } else if (tokens.length > 3 && tokens[3] === 'or') {
+                    // PROPERTY: A = B or C [ or D ...]
+                    // tokens = [name, '=', item1, 'or', item2, 'or', item3, ...]
+                    let newlegend = [tokens[0]];
+                    for (let j = 2; j < tokens.length; j += 2) {
+                        newlegend.push(tokens[j]);
+                    }
+                    newlegend.lineNumber = state.lineNumber;
+                    state.legend_properties.push(newlegend);
+                }
+            }
+        }
+    }
+}
+
 //also assigns glyphDict
 function levelsToArray(state) {
     let levels = state.levels;
@@ -469,21 +547,8 @@ function levelsToArray(state) {
         if (level.length === 0) {
             continue;
         }
-        // 检查是否为 legend 行（如 A = ...）
+        // Skip legend lines - they were already processed in preprocessLegendLinesInLevels
         if (typeof level[1] === 'string' && /^\s*([A-Za-z0-9_]+)\s*=.*$/.test(level[1])) {
-            // 解析 legend 行
-            if (typeof processLegendLine === 'function') {
-                state.current_line_wip_array = level[1].split(/\s+/);
-                processLegendLine(state, level[1]);
-            } else if (typeof window !== 'undefined' && window.processLegendLine) {
-                state.current_line_wip_array = level[1].split(/\s+/);
-                window.processLegendLine(state, level[1]);
-            }
-            if (typeof generateExtraMembers === 'function') {
-                generateExtraMembers(state);
-            } else if (typeof window !== 'undefined' && window.generateExtraMembers) {
-                window.generateExtraMembers(state);
-            }
             continue;
         }
         if (level[0] === '\n') {
@@ -3119,6 +3184,10 @@ function loadFile(str) {
         logError("No collision layers defined.  All objects need to be in collision layers.");
         return null;
     }
+
+    // Process legend lines in levels section BEFORE generateExtraMembers
+    // so that glyphDict is built with all legend definitions
+    preprocessLegendLinesInLevels(state);
 
     generateExtraMembers(state);
     generateMasks(state);
