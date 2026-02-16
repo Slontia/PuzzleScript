@@ -474,19 +474,23 @@ function preprocessLegendLinesInLevels(state) {
     if (!state.original_case_names) state.original_case_names = {};
     if (!state.original_line_numbers) state.original_line_numbers = {};
 
+    // Track character definitions to handle "last definition wins" logic
+    let charDefinitions = {}; // candname -> {definition, index, lineNumber}
+
     for (let i = 0; i < state.levels.length; i++) {
         let level = state.levels[i];
         if (!level || level.length === 0 || typeof level[1] !== 'string') {
             continue;
         }
 
-        // Check if this is a legend line (A = ...)
-        if (/^\s*([A-Za-z0-9_]+)\s*=.*$/.test(level[1])) {
+        // Check if this is a legend line (name = ...)
+        if (/^\s*[^\s=]+\s*=.*$/.test(level[1])) {
             let legendLine = level[1].trim();
             let mixedCaseLine = legendLine;
             
             // Parse the legend line into tokens, converting to lowercase
-            let tokens = legendLine.split(/\s+/).map(t => t.toLowerCase());
+            let tokens = legendLine.match(/[^\s=]+|=/g) || [];
+            tokens = tokens.map(t => t.toLowerCase());
             state.current_line_wip_array = tokens;
             
             // Store line number for error reporting
@@ -495,6 +499,12 @@ function preprocessLegendLinesInLevels(state) {
             // Process as a legend line
             if (tokens.length >= 3 && tokens[1] === '=') {
                 let candname = tokens[0];
+                
+                // Validation: only single-character names allowed in levels
+                if (candname.length !== 1) {
+                    logError(`In LEVELS, legend definitions can only use single-character names. "${candname}" is not allowed.`, state.lineNumber);
+                    continue;
+                }
                 
                 // Register original case name
                 function escapeRegExp(str) {
@@ -507,32 +517,54 @@ function preprocessLegendLinesInLevels(state) {
                     state.original_line_numbers[candname] = state.lineNumber;
                 }
                 
-                // Add to appropriate legend array
-                if (tokens.length === 3) {
-                    // SYNONYM: A = B
-                    let synonym = [tokens[0], tokens[2]];
-                    synonym.lineNumber = state.lineNumber;
-                    state.legend_synonyms.push(synonym);
-                } else if (tokens.length > 3 && tokens[3] === 'and') {
-                    // AGGREGATE: A = B and C [ and D ...]
-                    // tokens = [name, '=', item1, 'and', item2, 'and', item3, ...]
-                    let newlegend = [tokens[0]];
-                    for (let j = 2; j < tokens.length; j += 2) {
-                        newlegend.push(tokens[j]);
-                    }
-                    newlegend.lineNumber = state.lineNumber;
-                    state.legend_aggregates.push(newlegend);
-                } else if (tokens.length > 3 && tokens[3] === 'or') {
-                    // PROPERTY: A = B or C [ or D ...]
-                    // tokens = [name, '=', item1, 'or', item2, 'or', item3, ...]
-                    let newlegend = [tokens[0]];
-                    for (let j = 2; j < tokens.length; j += 2) {
-                        newlegend.push(tokens[j]);
-                    }
-                    newlegend.lineNumber = state.lineNumber;
-                    state.legend_properties.push(newlegend);
-                }
+                // Store definition info for "last wins" logic
+                charDefinitions[candname] = {
+                    tokens: tokens,
+                    index: i,
+                    lineNumber: state.lineNumber
+                };
             }
+        }
+    }
+
+    // Now process all collected character definitions
+    // First, remove old definitions of characters that will be redefined
+    for (let candname in charDefinitions) {
+        // Remove from existing arrays
+        state.legend_synonyms = state.legend_synonyms.filter(syn => syn[0] !== candname);
+        state.legend_aggregates = state.legend_aggregates.filter(agg => agg[0] !== candname);
+        state.legend_properties = state.legend_properties.filter(prop => prop[0] !== candname);
+    }
+
+    // Now add all new definitions
+    for (let candname in charDefinitions) {
+        let def = charDefinitions[candname];
+        let tokens = def.tokens;
+        
+        // Add to appropriate legend array
+        if (tokens.length === 3) {
+            // SYNONYM: A = B
+            let synonym = [tokens[0], tokens[2]];
+            synonym.lineNumber = def.lineNumber;
+            state.legend_synonyms.push(synonym);
+        } else if (tokens.length > 3 && tokens[3] === 'and') {
+            // AGGREGATE: A = B and C [ and D ...]
+            // tokens = [name, '=', item1, 'and', item2, 'and', item3, ...]
+            let newlegend = [tokens[0]];
+            for (let j = 2; j < tokens.length; j += 2) {
+                newlegend.push(tokens[j]);
+            }
+            newlegend.lineNumber = def.lineNumber;
+            state.legend_aggregates.push(newlegend);
+        } else if (tokens.length > 3 && tokens[3] === 'or') {
+            // PROPERTY: A = B or C [ or D ...]
+            // tokens = [name, '=', item1, 'or', item2, 'or', item3, ...]
+            let newlegend = [tokens[0]];
+            for (let j = 2; j < tokens.length; j += 2) {
+                newlegend.push(tokens[j]);
+            }
+            newlegend.lineNumber = def.lineNumber;
+            state.legend_properties.push(newlegend);
         }
     }
 }
@@ -548,7 +580,7 @@ function levelsToArray(state) {
             continue;
         }
         // Skip legend lines - they were already processed in preprocessLegendLinesInLevels
-        if (typeof level[1] === 'string' && /^\s*([A-Za-z0-9_]+)\s*=.*$/.test(level[1])) {
+        if (typeof level[1] === 'string' && /^\s*[^\s=]+\s*=.*$/.test(level[1])) {
             continue;
         }
         if (level[0] === '\n') {
