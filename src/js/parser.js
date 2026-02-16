@@ -422,9 +422,15 @@ let codeMirrorFn = function () {
             match_name = stream.match(/[^=\p{Z}\s\(]*(\p{Z}\s)*/u, true);
             let new_name = match_name[0].trim();
 
-            if (wordAlreadyDeclared(state, new_name)) {
+            // In levels section, only allow single-character names
+            if (!shouldProcess && new_name.length !== 1) {
+                resultToken = 'ERROR';
+                logError(`In LEVELS, legend definitions can only use single-character names. "${new_name}" is not allowed.`, state.lineNumber);
+            } else if (shouldProcess && wordAlreadyDeclared(state, new_name)) {
+                // In legend section, keep the original duplicate-name error behavior
                 resultToken = 'ERROR';
             } else {
+                // In levels section, allow redefining an existing name (last definition wins)
                 resultToken = 'NAME';
             }
 
@@ -1452,8 +1458,8 @@ let codeMirrorFn = function () {
                 case 'levels':
                     {
                         if (sol) {
-                            // Detect if this is a legend-style line (has "=" with word = ...)
-                            let legendLineMatch = stream.string.match(/^\s*[\p{L}\p{N}_]+\s*=/u);
+                            // Detect if this is a legend-style line (has "=" with name = ...)
+                            let legendLineMatch = stream.string.match(/^\s*[^\s=]+\s*=/u);
                             if (legendLineMatch) {
                                 state.levels_legend_line = true;
                                 state.tokenIndex = 0;  // Reset for legend tokenization
