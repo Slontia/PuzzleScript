@@ -483,8 +483,8 @@ function preprocessLegendLinesInLevels(state) {
             continue;
         }
 
-        // Check if this is a legend line (name = ...)
-        if (/^\s*[^\s=]+\s*=.*$/.test(level[1])) {
+        // Check if this is a legend line (requires spaces around '=')
+        if (level[0] !== '\n' && !/^\s*message\b/i.test(level[1]) && /^\s*[^\s=]+\s*=\s+.+$/.test(level[1])) {
             let legendLine = level[1].trim();
             let mixedCaseLine = legendLine;
             
@@ -569,6 +569,124 @@ function preprocessLegendLinesInLevels(state) {
     }
 }
 
+// Process directional legend syntax from LEGEND section
+// Creates missing directional objects and assigns them to the base object's collision layer
+// Helper function to rotate a 5x5 sprite matrix clockwise by 90 degrees
+function rotateSpriteMatrix90(matrix) {
+    if (!matrix || matrix.length !== 5) {
+        return matrix;
+    }
+    let rotated = [];
+    for (let i = 0; i < 5; i++) {
+        rotated[i] = [];
+        for (let j = 0; j < 5; j++) {
+            rotated[i][j] = matrix[4 - j][i];
+        }
+    }
+    return rotated;
+}
+
+function preprocessDirectionalLegends(state) {
+    if (!state.legend_directionals || state.legend_directionals.length === 0) {
+        return;
+    }
+
+    for (let i = 0; i < state.legend_directionals.length; i++) {
+        let entry = state.legend_directionals[i];
+        let alias = entry[0];
+        let base = entry[1];
+        let right = entry[2];
+        let down = entry[3];
+        let left = entry[4];
+        let lineNumber = entry.lineNumber;
+
+        let baseObj = state.objects[base];
+        if (baseObj === undefined) {
+            logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, lineNumber);
+            continue;
+        }
+
+        // Generate sprite matrix if needed
+        let baseSpriteMatrix = generateSpriteMatrix(baseObj.spritematrix);
+
+        let directionalNames = [right, down, left];
+        let rotations = [1, 2, 3]; // right=90°, down=180°, left=270°
+        
+        for (let j = 0; j < directionalNames.length; j++) {
+            let name = directionalNames[j];
+            if (state.objects[name] === undefined) {
+                // Rotate the sprite matrix
+                let rotatedMatrix = baseSpriteMatrix;
+                for (let k = 0; k < rotations[j]; k++) {
+                    rotatedMatrix = rotateSpriteMatrix90(rotatedMatrix);
+                }
+                
+                state.objects[name] = {
+                    lineNumber: lineNumber,
+                    colors: baseObj.colors.concat([]),
+                    spritematrix: rotatedMatrix
+                };
+                
+                // Register name for syntax highlighting
+                if (state.names.indexOf(name) === -1) {
+                    state.names.push(name);
+                }
+            }
+        }
+
+        // Ensure directional objects share the base object's collision layer
+        let baseLayerIndex = -1;
+        for (let layerIndex = 0; layerIndex < state.collisionLayers.length; layerIndex++) {
+            if (state.collisionLayers[layerIndex].indexOf(base) !== -1) {
+                baseLayerIndex = layerIndex;
+                break;
+            }
+        }
+
+        if (baseLayerIndex === -1) {
+            logError(`Directional legend base object "${base.toUpperCase()}" is not in any collision layer.`, lineNumber);
+            continue;
+        }
+
+        for (let j = 0; j < directionalNames.length; j++) {
+            let name = directionalNames[j];
+            
+            // Check if the object is already in any collision layer
+            let alreadyInLayer = false;
+            for (let layerIndex = 0; layerIndex < state.collisionLayers.length; layerIndex++) {
+                if (state.collisionLayers[layerIndex].indexOf(name) !== -1) {
+                    alreadyInLayer = true;
+                    break;
+                }
+            }
+            
+            // Only add to collision layer if not already in any layer
+            if (!alreadyInLayer && state.collisionLayers[baseLayerIndex].indexOf(name) === -1) {
+                state.collisionLayers[baseLayerIndex].push(name);
+            }
+        }
+
+        // Ensure alias is defined as a property (OR) if missing
+        let alreadyProperty = false;
+        for (let j = 0; j < state.legend_properties.length; j++) {
+            if (state.legend_properties[j][0] === alias) {
+                alreadyProperty = true;
+                break;
+            }
+        }
+        if (!alreadyProperty) {
+            let newlegend = [alias, base, right, down, left];
+            newlegend.lineNumber = lineNumber;
+            state.legend_properties.push(newlegend);
+        }
+        
+        // Register alias name for syntax highlighting
+        if (state.names.indexOf(alias) === -1) {
+            state.names.push(alias);
+        }
+    }
+}
+
 //also assigns glyphDict
 function levelsToArray(state) {
     let levels = state.levels;
@@ -580,7 +698,7 @@ function levelsToArray(state) {
             continue;
         }
         // Skip legend lines - they were already processed in preprocessLegendLinesInLevels
-        if (typeof level[1] === 'string' && /^\s*[^\s=]+\s*=.*$/.test(level[1])) {
+        if (level[0] !== '\n' && typeof level[1] === 'string' && /^\s*[^\s=]+\s*=\s+.+$/.test(level[1])) {
             continue;
         }
         if (level[0] === '\n') {
@@ -3216,6 +3334,9 @@ function loadFile(str) {
         logError("No collision layers defined.  All objects need to be in collision layers.");
         return null;
     }
+
+    // Process directional legend syntax BEFORE generateExtraMembers
+    preprocessDirectionalLegends(state);
 
     // Process legend lines in levels section BEFORE generateExtraMembers
     // so that glyphDict is built with all legend definitions

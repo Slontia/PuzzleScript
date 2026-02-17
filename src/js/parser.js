@@ -141,6 +141,17 @@ function wordAlreadyDeclared(state, n) {
     if (n in state.objects) {
         return state.objects[n];
     }
+    // Check if this is a directional legend-created object
+    if (state.legend_directionals && state.legend_directionals.length > 0) {
+        for (let i = 0; i < state.legend_directionals.length; i++) {
+            let entry = state.legend_directionals[i];
+            // entry = [alias, base, right, down, left]
+            // Check if n is the alias or any of the directional objects
+            if (entry[0] === n || entry[2] === n || entry[3] === n || entry[4] === n) {
+                return state.legend_directionals[i];
+            }
+        }
+    }
     for (let i = 0; i < state.legend_aggregates.length; i++) {
         let a = state.legend_aggregates[i];
         if (a[0] === n) {
@@ -194,24 +205,33 @@ let codeMirrorFn = function () {
     'use strict';
 
     function checkNameDefined(state, candname) {
-        if (state.objects[candname] !== undefined) {
+        let normalized = candname.toLowerCase();
+        if (state.objects[normalized] !== undefined) {
             return;
+        }
+        if (state.legend_directionals && state.legend_directionals.length > 0) {
+            for (let i = 0; i < state.legend_directionals.length; i++) {
+                let entry = state.legend_directionals[i];
+                if (entry[1] === normalized || entry[2] === normalized || entry[3] === normalized || entry[4] === normalized) {
+                    return;
+                }
+            }
         }
         for (let i = 0; i < state.legend_synonyms.length; i++) {
             let entry = state.legend_synonyms[i];
-            if (entry[0] == candname) {
+            if (entry[0] == normalized) {
                 return;
             }
         }
         for (let i = 0; i < state.legend_aggregates.length; i++) {
             let entry = state.legend_aggregates[i];
-            if (entry[0] == candname) {
+            if (entry[0] == normalized) {
                 return;
             }
         }
         for (let i = 0; i < state.legend_properties.length; i++) {
             let entry = state.legend_properties[i];
-            if (entry[0] == candname) {
+            if (entry[0] == normalized) {
                 return;
             }
         }
@@ -415,10 +435,107 @@ let codeMirrorFn = function () {
         }
     }
 
+    function processDirectionalLegendLine(state, mixedCase) {
+        let splits = state.current_line_wip_array;
+        if (splits.length === 0) {
+            return;
+        }
+
+        // Expected format: Alias = Base @ Right / Down / Left
+        if (splits.length !== 9 || splits[1] !== '=' || splits[3] !== '@' || splits[5] !== '/' || splits[7] !== '/') {
+            logError('Incorrect format of directional legend - should be "Alias = Base @ Right / Down / Left".', state.lineNumber);
+            return;
+        }
+
+        let alias = splits[0].toLowerCase();
+        let base = splits[2].toLowerCase();
+        let right = splits[4].toLowerCase();
+        let down = splits[6].toLowerCase();
+        let left = splits[8].toLowerCase();
+
+        let alreadyDefined = wordAlreadyDeclared(state, alias);
+        if (alreadyDefined !== null) {
+            logError(`Name "${alias.toUpperCase()}" already in use (on line <a onclick="jumpToLine(${alreadyDefined.lineNumber});" href="javascript:void(0);"><span class="errorTextLineNumber">line ${alreadyDefined.lineNumber}</span></a>).`, state.lineNumber);
+            return;
+        }
+
+        if (state.objects[base] === undefined) {
+            logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, state.lineNumber);
+            return;
+        }
+
+        // Register original case for all names
+        registerOriginalCaseName(state, alias, mixedCase, state.lineNumber);
+        registerOriginalCaseName(state, base, mixedCase, state.lineNumber);
+        registerOriginalCaseName(state, right, mixedCase, state.lineNumber);
+        registerOriginalCaseName(state, down, mixedCase, state.lineNumber);
+        registerOriginalCaseName(state, left, mixedCase, state.lineNumber);
+
+        // Store directional definition for compiler to create objects and set layers
+        let entry = [alias, base, right, down, left];
+        entry.lineNumber = state.lineNumber;
+        state.legend_directionals.push(entry);
+
+        // Register names for syntax highlighting
+        if (state.names.indexOf(alias) === -1) {
+            state.names.push(alias);
+        }
+        if (state.names.indexOf(right) === -1) {
+            state.names.push(right);
+        }
+        if (state.names.indexOf(down) === -1) {
+            state.names.push(down);
+        }
+        if (state.names.indexOf(left) === -1) {
+            state.names.push(left);
+        }
+
+        // Define alias as a property (OR) of the four direction objects
+        let newlegend = [alias, base, right, down, left];
+        newlegend.lineNumber = state.lineNumber;
+        state.legend_properties.push(newlegend);
+    }
+
     function tokenizeLegendLine(stream, state, mixedCase, shouldProcess, suppressErrors) {
         let resultToken = "";
         let match_name = null;
-        if (state.tokenIndex === 0) {
+        if (state.tokenIndex === 0 && shouldProcess && stream.sol()) {
+            // Detect directional legend syntax: Alias = Base @ Right / Down / Left
+            state.legend_directional_line = /^\s*[^=\s]+\s*=\s*[^@\s]+\s*@/u.test(stream.string);
+        }
+
+        if (state.legend_directional_line) {
+            if (state.tokenIndex === 0 || state.tokenIndex === 2 || state.tokenIndex === 4 || state.tokenIndex === 6 || state.tokenIndex === 8) {
+                stream.match(/[\p{Z}\s]*/u, true);
+                match_name = stream.match(reg_name, true);
+                if (match_name === null) {
+                    if (!suppressErrors) {
+                        logError("Something bad's happening in the LEGEND", state.lineNumber);
+                    }
+                    stream.match(reg_notcommentstart, true);
+                    resultToken = 'ERROR';
+                } else {
+                    resultToken = 'NAME';
+                }
+                stream.match(/[\p{Z}\s]*/u, true);
+                state.tokenIndex++;
+            } else {
+                stream.match(/[\p{Z}\s]*/u, true);
+                match_name = stream.match(/[=@\/]/u, true);
+                if (match_name === null) {
+                    if (!suppressErrors) {
+                        logError("Something bad's happening in the LEGEND", state.lineNumber);
+                    }
+                    stream.match(reg_notcommentstart, true);
+                    resultToken = 'ERROR';
+                    match_name = ["ERROR"];
+                } else {
+                    resultToken = 'ASSIGNMENT';
+                }
+                stream.match(/[\p{Z}\s]*/u, true);
+                state.tokenIndex++;
+            }
+        } else if (state.tokenIndex === 0) {
             match_name = stream.match(/[^=\p{Z}\s\(]*(\p{Z}\s)*/u, true);
             let new_name = match_name[0].trim();
 
@@ -505,7 +622,11 @@ let codeMirrorFn = function () {
 
         if (stream.eol()) {
             if (shouldProcess) {
-                processLegendLine(state, mixedCase);
+                if (state.legend_directional_line) {
+                    processDirectionalLegendLine(state, mixedCase);
+                } else {
+                    processLegendLine(state, mixedCase);
+                }
             }
             if (!shouldProcess) {
                 // Store legend line in levels for compiler processing
@@ -531,6 +652,7 @@ let codeMirrorFn = function () {
             state.levels_legend_line = false;
             state.tokenIndex = 0;
             state.current_line_wip_array = [];
+            state.legend_directional_line = false;
         }
 
         return resultToken;
@@ -596,6 +718,7 @@ let codeMirrorFn = function () {
             let legend_synonymsCopy = [];
             let legend_aggregatesCopy = [];
             let legend_propertiesCopy = [];
+            let legend_directionalsCopy = [];
             let soundsCopy = [];
             let levelsCopy = [];
             let winConditionsCopy = [];
@@ -609,6 +732,9 @@ let codeMirrorFn = function () {
             }
             for (let i = 0; i < state.legend_properties.length; i++) {
                 legend_propertiesCopy.push(state.legend_properties[i].concat([]));
+            }
+            for (let i = 0; i < state.legend_directionals.length; i++) {
+                legend_directionalsCopy.push(state.legend_directionals[i].concat([]));
             }
             for (let i = 0; i < state.sounds.length; i++) {
                 soundsCopy.push(state.sounds[i].concat([]));
@@ -651,6 +777,7 @@ let codeMirrorFn = function () {
                 legend_synonyms: legend_synonymsCopy,
                 legend_aggregates: legend_aggregatesCopy,
                 legend_properties: legend_propertiesCopy,
+                legend_directionals: legend_directionalsCopy,
 
                 sounds: soundsCopy,
 
@@ -903,22 +1030,23 @@ let codeMirrorFn = function () {
                                 return 'ERROR';
                             } else {
                                 let candname = match_name[0].trim();
-                                if (state.objects[candname] !== undefined) {
+                                let candname_lower = candname.toLowerCase();
+                                if (state.objects[candname_lower] !== undefined) {
                                     logError('Object "' + candname.toUpperCase() + '" defined multiple times.', state.lineNumber);
                                     return 'ERROR';
                                 }
                                 for (let i = 0; i < state.legend_synonyms.length; i++) {
                                     let entry = state.legend_synonyms[i];
-                                    if (entry[0] == candname) {
+                                    if (entry[0] == candname_lower) {
                                         logError('Name "' + candname.toUpperCase() + '" already in use.', state.lineNumber);
                                     }
                                 }
-                                if (keyword_array.indexOf(candname) >= 0) {
+                                if (keyword_array.indexOf(candname_lower) >= 0) {
                                     logWarning('You named an object "' + candname.toUpperCase() + '", but this is a keyword. Don\'t do that!', state.lineNumber);
                                 }
 
                                 if (sol) {
-                                    state.objects_candname = candname;
+                                    state.objects_candname = candname_lower;
                                     registerOriginalCaseName(state, candname, mixedCase, state.lineNumber);
                                     state.objects[state.objects_candname] = {
                                         lineNumber: state.lineNumber,
@@ -1252,6 +1380,17 @@ let codeMirrorFn = function () {
                                     return [n];
                                 }
 
+                                // Check if this is a directional legend-created object
+                                if (state.legend_directionals && state.legend_directionals.length > 0) {
+                                    for (let i = 0; i < state.legend_directionals.length; i++) {
+                                        let entry = state.legend_directionals[i];
+                                        // entry = [alias, base, right, down, left]
+                                        // Check if n is one of: right, down, or left (auto-created objects)
+                                        if (entry[2] === n || entry[3] === n || entry[4] === n) {
+                                            return [n];
+                                        }
+                                    }
+                                }
 
                                 for (let i = 0; i < state.legend_synonyms.length; i++) {
                                     let a = state.legend_synonyms[i];
@@ -1458,12 +1597,17 @@ let codeMirrorFn = function () {
                 case 'levels':
                     {
                         if (sol) {
-                            // Detect if this is a legend-style line (has "=" with name = ...)
-                            let legendLineMatch = stream.string.match(/^\s*[^\s=]+\s*=/u);
-                            if (legendLineMatch) {
-                                state.levels_legend_line = true;
-                                state.tokenIndex = 0;  // Reset for legend tokenization
-                                // Fall through to process first token
+                            // Detect if this is a legend-style line (requires spaces around '=')
+                            let isMessageLine = /^\s*message\b/u.test(stream.string);
+                            if (!isMessageLine) {
+                                let legendLineMatch = stream.string.match(/^\s*[^\s=]+\s*=\s+.+$/u);
+                                if (legendLineMatch) {
+                                    state.levels_legend_line = true;
+                                    state.tokenIndex = 0;  // Reset for legend tokenization
+                                    // Fall through to process first token
+                                } else {
+                                    state.levels_legend_line = false;
+                                }
                             } else {
                                 state.levels_legend_line = false;
                             }
@@ -1497,8 +1641,9 @@ let codeMirrorFn = function () {
                                 }
                                 return 'MESSAGE_VERB';
                             } else {
-                                // if the line contains whitespace, highlight as legend-style line
-                                if (/[\p{Z}\s]/u.test(stream.string)) {
+                                // if the trimmed line contains internal whitespace, highlight as legend-style line
+                                let trimmed = stream.string.trim();
+                                if (/\S[\p{Z}\s]+\S/u.test(trimmed)) {
                                     stream.skipToEnd();
                                     return 'LEGEND';
                                 }
@@ -1693,6 +1838,7 @@ let codeMirrorFn = function () {
                 legend_synonyms: [],
                 legend_aggregates: [],
                 legend_properties: [],
+                legend_directionals: [],
 
                 sounds: [],
                 rules: [],
@@ -1712,7 +1858,8 @@ let codeMirrorFn = function () {
 
                 subsection: '',
 
-                levels_legend_line: false
+                levels_legend_line: false,
+                legend_directional_line: false
             };
         }
     };
