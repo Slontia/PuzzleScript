@@ -2740,12 +2740,20 @@ function generateMasks(state) {
         let synprop = synonyms_and_properties[i];
         if (synprop.length === 2) {
             // synonym (a = b)
+            if (objectMask[synprop[1]] === undefined) {
+                logError(`Variable "${synprop[1].toUpperCase()}" is not defined. Check your LEGEND section.`, synprop.lineNumber);
+                continue;
+            }
             objectMask[synprop[0]] = objectMask[synprop[1]];
         } else {
             // property (a = b or c)
             let val = new BitVec(STRIDE_OBJ);
             for (let j = 1; j < synprop.length; j++) {
                 let n = synprop[j];
+                if (objectMask[n] === undefined) {
+                    logError(`Variable "${n.toUpperCase()}" is not defined. Check your LEGEND section.`, synprop.lineNumber);
+                    continue;
+                }
                 val.ior(objectMask[n]);
             }
             objectMask[synprop[0]] = val;
@@ -2769,6 +2777,10 @@ function generateMasks(state) {
         let aggregateMask = new BitVec(STRIDE_OBJ);
         for (let i = 0; i < objectnames.length; i++) {
             let n = objectnames[i];
+            if (objectMask[n] === undefined) {
+                logError(`Variable "${n.toUpperCase()}" is not defined. Check your LEGEND section for aggregate "${aggregateName.toUpperCase()}".`);
+                continue;
+            }
             let o = state.objects[n];
             aggregateMask.ior(objectMask[n]);
         }
