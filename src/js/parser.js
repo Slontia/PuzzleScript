@@ -459,9 +459,45 @@ let codeMirrorFn = function () {
             return;
         }
 
-        if (state.objects[base] === undefined) {
-            logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, state.lineNumber);
+        // Check if this is a directional object or directional collection
+        let isBaseObject = state.objects[base] !== undefined;
+        let isBaseCollection = false;
+        
+        // Check if base is a collection (property)
+        if (!isBaseObject) {
+            for (let prop of state.legend_properties) {
+                if (prop[0] === base) {
+                    isBaseCollection = true;
+                    break;
+                }
+            }
+        }
+
+        if (!isBaseObject && !isBaseCollection) {
+            logError(`Directional legend base "${base.toUpperCase()}" is not defined in OBJECTS or LEGEND.`, state.lineNumber);
             return;
+        }
+
+        // If this is a directional collection
+        if (isBaseCollection) {
+            // Don't validate other directions here - they will be auto-generated in compiler
+            // if they follow the naming pattern (e.g., LaserU → LaserR/D/L)
+            
+            // Store directional collection definition
+            let entry = [alias, base, right, down, left, true]; // true = is collection
+            entry.lineNumber = state.lineNumber;
+            state.legend_directionals.push(entry);
+        } else {
+            // Original object directional definition
+            if (state.objects[base] === undefined) {
+                logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, state.lineNumber);
+                return;
+            }
+
+            // Store directional object definition
+            let entry = [alias, base, right, down, left];
+            entry.lineNumber = state.lineNumber;
+            state.legend_directionals.push(entry);
         }
 
         // Register original case for all names
@@ -470,11 +506,6 @@ let codeMirrorFn = function () {
         registerOriginalCaseName(state, right, mixedCase, state.lineNumber);
         registerOriginalCaseName(state, down, mixedCase, state.lineNumber);
         registerOriginalCaseName(state, left, mixedCase, state.lineNumber);
-
-        // Store directional definition for compiler to create objects and set layers
-        let entry = [alias, base, right, down, left];
-        entry.lineNumber = state.lineNumber;
-        state.legend_directionals.push(entry);
 
         // Register names for syntax highlighting
         if (state.names.indexOf(alias) === -1) {
@@ -490,10 +521,14 @@ let codeMirrorFn = function () {
             state.names.push(left);
         }
 
-        // Define alias as a property (OR) of the four direction objects
-        let newlegend = [alias, base, right, down, left];
-        newlegend.lineNumber = state.lineNumber;
-        state.legend_properties.push(newlegend);
+        // Define alias as a property (OR) of the four direction objects/collections
+        // BUT: for collection directionals, DON'T add to legend_properties yet
+        // The compiler will auto-generate the missing directions and add the complete definition
+        if (!isBaseCollection) {
+            let newlegend = [alias, base, right, down, left];
+            newlegend.lineNumber = state.lineNumber;
+            state.legend_properties.push(newlegend);
+        }
     }
 
     function tokenizeLegendLine(stream, state, mixedCase, shouldProcess, suppressErrors) {

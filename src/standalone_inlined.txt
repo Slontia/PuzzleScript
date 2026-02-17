@@ -12330,9 +12330,45 @@ let codeMirrorFn = function () {
             return;
         }
 
-        if (state.objects[base] === undefined) {
-            logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, state.lineNumber);
+        // Check if this is a directional object or directional collection
+        let isBaseObject = state.objects[base] !== undefined;
+        let isBaseCollection = false;
+        
+        // Check if base is a collection (property)
+        if (!isBaseObject) {
+            for (let prop of state.legend_properties) {
+                if (prop[0] === base) {
+                    isBaseCollection = true;
+                    break;
+                }
+            }
+        }
+
+        if (!isBaseObject && !isBaseCollection) {
+            logError(`Directional legend base "${base.toUpperCase()}" is not defined in OBJECTS or LEGEND.`, state.lineNumber);
             return;
+        }
+
+        // If this is a directional collection
+        if (isBaseCollection) {
+            // Don't validate other directions here - they will be auto-generated in compiler
+            // if they follow the naming pattern (e.g., LaserU → LaserR/D/L)
+            
+            // Store directional collection definition
+            let entry = [alias, base, right, down, left, true]; // true = is collection
+            entry.lineNumber = state.lineNumber;
+            state.legend_directionals.push(entry);
+        } else {
+            // Original object directional definition
+            if (state.objects[base] === undefined) {
+                logError(`Directional legend base object "${base.toUpperCase()}" is not defined in OBJECTS.`, state.lineNumber);
+                return;
+            }
+
+            // Store directional object definition
+            let entry = [alias, base, right, down, left];
+            entry.lineNumber = state.lineNumber;
+            state.legend_directionals.push(entry);
         }
 
         // Register original case for all names
@@ -12341,11 +12377,6 @@ let codeMirrorFn = function () {
         registerOriginalCaseName(state, right, mixedCase, state.lineNumber);
         registerOriginalCaseName(state, down, mixedCase, state.lineNumber);
         registerOriginalCaseName(state, left, mixedCase, state.lineNumber);
-
-        // Store directional definition for compiler to create objects and set layers
-        let entry = [alias, base, right, down, left];
-        entry.lineNumber = state.lineNumber;
-        state.legend_directionals.push(entry);
 
         // Register names for syntax highlighting
         if (state.names.indexOf(alias) === -1) {
@@ -12361,10 +12392,14 @@ let codeMirrorFn = function () {
             state.names.push(left);
         }
 
-        // Define alias as a property (OR) of the four direction objects
-        let newlegend = [alias, base, right, down, left];
-        newlegend.lineNumber = state.lineNumber;
-        state.legend_properties.push(newlegend);
+        // Define alias as a property (OR) of the four direction objects/collections
+        // BUT: for collection directionals, DON'T add to legend_properties yet
+        // The compiler will auto-generate the missing directions and add the complete definition
+        if (!isBaseCollection) {
+            let newlegend = [alias, base, right, down, left];
+            newlegend.lineNumber = state.lineNumber;
+            state.legend_properties.push(newlegend);
+        }
     }
 
     function tokenizeLegendLine(stream, state, mixedCase, shouldProcess, suppressErrors) {
@@ -14333,6 +14368,277 @@ function rotateSpriteMatrix90(matrix) {
     return rotated;
 }
 
+function autoGenerateCollectionDirections(state) {
+    // Auto-generate missing collection directions based on directional mappings
+    console.log("[autoGenerateCollectionDirections] Starting...");
+    
+    if (!state.legend_directionals || state.legend_directionals.length === 0) {
+        console.log("[autoGenerateCollectionDirections] No legend_directionals found");
+        return;
+    }
+
+    console.log("[autoGenerateCollectionDirections] Found legend_directionals:", state.legend_directionals.length);
+    
+    // Build a map of directional variants
+    // variantsMap[name] = [up, right, down, left]
+    let variantsMap = {};
+    
+    // Collect all directional definitions (both object and collection level)
+    for (let entry of state.legend_directionals) {
+        let alias = entry[0];
+        let base = entry[1];
+        let right = entry[2];
+        let down = entry[3];
+        let left = entry[4];
+        let variants = [base, right, down, left];
+        
+        // Map all variants to the same array
+        variantsMap[alias] = variants;
+        variantsMap[base] = variants;
+        variantsMap[right] = variants;
+        variantsMap[down] = variants;
+        variantsMap[left] = variants;
+    }
+
+    console.log('[autoGenerateCollectionDirections] variantsMap keys:', Object.keys(variantsMap).length);
+    console.log('[autoGenerateCollectionDirections] variantsMap sample:', Object.keys(variantsMap).slice(0, 10));
+
+    // Process collection directionals that need auto-generation
+    for (let i = 0; i < state.legend_directionals.length; i++) {
+        let entry = state.legend_directionals[i];
+        let isCollection = entry.length > 5 && entry[5] === true;
+        
+        if (!isCollection) {
+            continue; // Only process collection directionals
+        }
+
+        let alias = entry[0];
+        let base = entry[1];
+        let right = entry[2];
+        let down = entry[3];
+        let left = entry[4];
+        let lineNumber = entry.lineNumber;
+        
+        // Get original case names for display
+        let rightOriginal = state.original_case_names[right] || right;
+        let downOriginal = state.original_case_names[down] || down;
+        let leftOriginal = state.original_case_names[left] || left;
+        
+        console.log(`[autoGenerateCollectionDirections] Processing collection: ${alias} = ${base} @ ${right} / ${down} / ${left}`);
+
+        // Find the base collection definition
+        let baseCollectionDef = null;
+        for (let prop of state.legend_properties) {
+            if (prop[0] === base) {
+                baseCollectionDef = prop;
+                break;
+            }
+        }
+
+        if (!baseCollectionDef) {
+            logError(`Collection "${base.toUpperCase()}" is not defined in LEGEND.`, lineNumber);
+            continue;
+        }
+
+        // Extract the objects from the base collection
+        let baseObjects = baseCollectionDef.slice(1);
+        console.log(`[autoGenerateCollectionDirections] Found baseObjects for ${base}:`, baseObjects);
+
+        // Check if directions already exist
+        let rightExists = false, downExists = false, leftExists = false;
+        for (let prop of state.legend_properties) {
+            if (prop[0] === right) rightExists = true;
+            if (prop[0] === down) downExists = true;
+            if (prop[0] === left) leftExists = true;
+        }
+
+        // For each missing direction, generate it by rotating objects
+        if (!rightExists) {
+            console.log(`[autoGenerateCollectionDirections] Generating ${right}...`);
+            let rotatedObjects = rotateCollectionObjects(baseObjects, 1, variantsMap, state);
+            console.log(`[autoGenerateCollectionDirections] rotateCollectionObjects returned:`, rotatedObjects);
+            if (rotatedObjects && rotatedObjects.length > 0) {
+                let rotatedDef = [right].concat(rotatedObjects);
+                rotatedDef.lineNumber = lineNumber;
+                state.legend_properties.push(rotatedDef);
+                console.log(`[autoGenerateCollectionDirections] Created ${right} =`, rotatedDef);
+                console.log(`[autoGenerateCollectionDirections] Added to state.names:`, right);
+                if (state.names.indexOf(right) === -1) {
+                    state.names.push(right);
+                }
+                // Also register original case name
+                if (rightOriginal && !state.original_case_names[right]) {
+                    state.original_case_names[right] = rightOriginal;
+                }
+            } else {
+                console.log(`[autoGenerateCollectionDirections] Failed to generate ${right} - rotatedObjects is null or empty`);
+                logError(`Cannot auto-generate collection "${rightOriginal.toUpperCase()}" - objects in "${base.toUpperCase()}" don't have directional definitions.`, lineNumber);
+            }
+        } else {
+            console.log(`[autoGenerateCollectionDirections] ${right} already exists, skipping`);
+        }
+
+        if (!downExists) {
+            let rotatedObjects = rotateCollectionObjects(baseObjects, 2, variantsMap, state);
+            if (rotatedObjects && rotatedObjects.length > 0) {
+                let rotatedDef = [down].concat(rotatedObjects);
+                rotatedDef.lineNumber = lineNumber;
+                state.legend_properties.push(rotatedDef);
+                if (state.names.indexOf(down) === -1) {
+                    state.names.push(down);
+                }
+                // Also register original case name
+                if (downOriginal && !state.original_case_names[down]) {
+                    state.original_case_names[down] = downOriginal;
+                }
+            } else {
+                logError(`Cannot auto-generate collection "${downOriginal.toUpperCase()}" - objects in "${base.toUpperCase()}" don't have directional definitions.`, lineNumber);
+            }
+        }
+
+        if (!leftExists) {
+            let rotatedObjects = rotateCollectionObjects(baseObjects, 3, variantsMap, state);
+            if (rotatedObjects && rotatedObjects.length > 0) {
+                let rotatedDef = [left].concat(rotatedObjects);
+                rotatedDef.lineNumber = lineNumber;
+                state.legend_properties.push(rotatedDef);
+                if (state.names.indexOf(left) === -1) {
+                    state.names.push(left);
+                }
+                // Also register original case name
+                if (leftOriginal && !state.original_case_names[left]) {
+                    state.original_case_names[left] = leftOriginal;
+                }
+            } else {
+                logError(`Cannot auto-generate collection "${leftOriginal.toUpperCase()}" - objects in "${base.toUpperCase()}" don't have directional definitions.`, lineNumber);
+            }
+        }
+        
+        // After generating all directions, add the alias definition (alias = base or right or down or left)
+        // Check if alias definition already exists
+        let aliasExists = false;
+        for (let prop of state.legend_properties) {
+            if (prop[0] === alias) {
+                aliasExists = true;
+                break;
+            }
+        }
+        
+        if (!aliasExists) {
+            let aliasDef = [alias, base, right, down, left];
+            aliasDef.lineNumber = lineNumber;
+            state.legend_properties.push(aliasDef);
+            console.log(`[autoGenerateCollectionDirections] Created alias ${alias} = ${base} or ${right} or ${down} or ${left}`);
+        }
+    }
+}
+
+function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
+    // Rotate collection objects using the variantsMap
+    // For each object/collection in baseObjects, look up its directional variants
+    // and select the appropriate rotated version
+    let result = [];
+    
+    console.log(`[rotateCollectionObjects] baseObjects:`, baseObjects, `rotations:`, rotations);
+    
+    // Direction rotation mapping for name-based rotation
+    const dirMap = { 'u': 'r', 'r': 'd', 'd': 'l', 'l': 'u' };
+    
+    function rotateDir(dir, times) {
+        let d = dir.toLowerCase();
+        for (let i = 0; i < times; i++) {
+            d = dirMap[d] || d;
+        }
+        return d;
+    }
+    
+    function tryRotateByName(objName, rotations) {
+        // Try to rotate object name by rotating direction suffixes
+        // e.g., MirrorSlashLaserRU (Right-Up) -> MirrorSlashLaserDR (Down-Right)
+        const lower = objName.toLowerCase();
+        
+        // Check if name ends with two direction letters
+        const match = lower.match(/^(.+?)([udlr])([udlr])$/);
+        if (match) {
+            const [, prefix, dir1, dir2] = match;
+            const newDir1 = rotateDir(dir1, rotations);
+            const newDir2 = rotateDir(dir2, rotations);
+            const rotatedName = prefix + newDir1 + newDir2;
+            
+            // Check if this object exists in the game
+            if ((state.objects && state.objects.hasOwnProperty(rotatedName)) || 
+                (state.propertiesDict && state.propertiesDict.hasOwnProperty(rotatedName)) ||
+                (state.aggregatesDict && state.aggregatesDict.hasOwnProperty(rotatedName))) {
+                console.log(`[rotateCollectionObjects] Name-based rotation: ${objName} -> ${rotatedName}`);
+                return rotatedName;
+            }
+        }
+        
+        // Check if name ends with one direction letter
+        const match1 = lower.match(/^(.+?)([udlr])$/);
+        if (match1) {
+            const [, prefix, dir] = match1;
+            const newDir = rotateDir(dir, rotations);
+            const rotatedName = prefix + newDir;
+            
+            // Check if this object exists
+            if ((state.objects && state.objects.hasOwnProperty(rotatedName)) || 
+                (state.propertiesDict && state.propertiesDict.hasOwnProperty(rotatedName)) ||
+                (state.aggregatesDict && state.aggregatesDict.hasOwnProperty(rotatedName))) {
+                console.log(`[rotateCollectionObjects] Name-based rotation: ${objName} -> ${rotatedName}`);
+                return rotatedName;
+            }
+        }
+        
+        return null;
+    }
+    
+    for (let obj of baseObjects) {
+        // First try name-based rotation
+        let rotatedObject = tryRotateByName(obj, rotations);
+        
+        if (!rotatedObject) {
+            // Fall back to variantsMap-based rotation
+            let variants = variantsMap[obj];
+            
+            console.log(`[rotateCollectionObjects] obj=${obj}, trying variantsMap, variants=`, variants);
+            
+            if (!variants) {
+                // Object/collection doesn't have directional variants defined
+                console.log(`[rotateCollectionObjects] No variants found for ${obj}, and name-based rotation failed`);
+                return null;
+            }
+            
+            // Find which variant this object is (0=up, 1=right, 2=down, 3=left)
+            let currentIndex = -1;
+            for (let i = 0; i < variants.length; i++) {
+                if (variants[i] === obj) {
+                    currentIndex = i;
+                    break;
+                }
+            }
+            
+            console.log(`[rotateCollectionObjects] ${obj} is at index ${currentIndex} in variants`);
+            
+            if (currentIndex === -1) {
+                // Shouldn't happen, but handle it
+                console.log(`[rotateCollectionObjects] Could not find ${obj} in its variants array!`);
+                return null;
+            }
+            
+            // Calculate the rotated index
+            let rotatedIndex = (currentIndex + rotations) % 4;
+            rotatedObject = variants[rotatedIndex];
+            
+            console.log(`[rotateCollectionObjects] ${obj}[${currentIndex}] + ${rotations} -> [${rotatedIndex}] = ${rotatedObject}`);
+        }
+        
+        result.push(rotatedObject);
+    }
+    
+    return result;
+}
+
 function preprocessDirectionalLegends(state) {
     if (!state.legend_directionals || state.legend_directionals.length === 0) {
         return;
@@ -14340,6 +14646,12 @@ function preprocessDirectionalLegends(state) {
 
     for (let i = 0; i < state.legend_directionals.length; i++) {
         let entry = state.legend_directionals[i];
+        let isCollection = entry.length > 5 && entry[5] === true;
+        
+        if (isCollection) {
+            continue; // Skip collection directionals - they're handled by autoGenerateCollectionDirections
+        }
+
         let alias = entry[0];
         let base = entry[1];
         let right = entry[2];
@@ -14551,18 +14863,30 @@ function expandDirectionalRules(rule, state) {
     // Build single comprehensive map
     // Maps each object name (variant or alias) to its variants array
     const objectVariantsMap = {};
+    const collectionVariantsMap = {}; // Maps collection names to their directional variants
     
     if (state.legend_directionals && state.legend_directionals.length > 0) {
         for (let entry of state.legend_directionals) {
+            const isCollection = entry.length > 5 && entry[5] === true;
             const [alias, base, right, down, left] = entry;
             const variants = [base, right, down, left];
             
-            // Map alias and all variants to the same array
-            objectVariantsMap[alias] = variants;
-            objectVariantsMap[base] = variants;
-            objectVariantsMap[right] = variants;
-            objectVariantsMap[down] = variants;
-            objectVariantsMap[left] = variants;
+            if (isCollection) {
+                // For collection directional definitions
+                // Map the alias to the collection variants
+                collectionVariantsMap[alias] = variants;
+                collectionVariantsMap[base] = variants;
+                collectionVariantsMap[right] = variants;
+                collectionVariantsMap[down] = variants;
+                collectionVariantsMap[left] = variants;
+            } else {
+                // Map alias and all variants to the same array
+                objectVariantsMap[alias] = variants;
+                objectVariantsMap[base] = variants;
+                objectVariantsMap[right] = variants;
+                objectVariantsMap[down] = variants;
+                objectVariantsMap[left] = variants;
+            }
         }
     }
     
@@ -14576,18 +14900,22 @@ function expandDirectionalRules(rule, state) {
             rotatedRule = rotatedRule.replace(new RegExp('@' + fromDir + '\\b', 'gi'), '@' + toDir);
         }
         
-        // Replace all @ObjectName with rotated variants
-        // Process objects in order of their name length (longest first) to avoid partial matches
-        const sortedNames = Object.keys(objectVariantsMap).sort((a, b) => b.length - a.length);
+        // Replace all @ObjectName and @CollectionName with rotated variants
+        // Process in order of their name length (longest first) to avoid partial matches
+        const sortedObjectNames = Object.keys(objectVariantsMap).sort((a, b) => b.length - a.length);
+        const sortedCollectionNames = Object.keys(collectionVariantsMap).sort((a, b) => b.length - a.length);
+        const sortedNames = sortedObjectNames.concat(sortedCollectionNames);
         
-        for (let objName of sortedNames) {
-            const variants = objectVariantsMap[objName];
+        for (let name of sortedNames) {
+            // Determine which map to use
+            const variants = objectVariantsMap[name] || collectionVariantsMap[name];
+            if (!variants) continue;
             
             // Only process if marked with @
-            const pattern = new RegExp('@' + objName + '\\b', 'gi');
+            const pattern = new RegExp('@' + name + '\\b', 'gi');
             if (pattern.test(rotatedRule)) {
                 // Find current index in variants array
-                const currentIdx = variants.indexOf(objName);
+                const currentIdx = variants.indexOf(name);
                 if (currentIdx >= 0) {
                     // Rotate: new index = (current index + rotation) % 4
                     const newIdx = (currentIdx + rotation) % 4;
@@ -17210,6 +17538,9 @@ function loadFile(str) {
 
     // Process directional legend syntax BEFORE generateExtraMembers
     preprocessDirectionalLegends(state);
+    
+    // Auto-generate missing collection directions
+    autoGenerateCollectionDirections(state);
 
     // Process legend lines in levels section BEFORE generateExtraMembers
     // so that glyphDict is built with all legend definitions
