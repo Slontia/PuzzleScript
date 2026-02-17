@@ -1495,6 +1495,11 @@ let codeMirrorFn = function () {
                         if (stream.match(/[\p{Z}\s]*->[\p{Z}\s]*/u, true)) {
                             return 'ARROW';
                         }
+                        // Handle @ prefix for directional rule expansion
+                        if (stream.match(/@/u, true)) {
+                            stream.match(/[\p{Z}\s]*/u, true);
+                            return 'AT_PREFIX';
+                        }
                         if (ch === '[' || ch === '|' || ch === ']' || ch === '+') {
                             if (ch !== '+') {
                                 state.tokenIndex = 1;
@@ -1503,7 +1508,7 @@ let codeMirrorFn = function () {
                             stream.match(/[\p{Z}\s]*/u, true);
                             return 'BRACKET';
                         } else {
-                            let m = stream.match(/[^\[\|\]\p{Z}\s]*/u, true)[0].trim();
+                            let m = stream.match(/[^\[\|\]\p{Z}\s@]*/u, true)[0].trim();
 
                             if (state.tokenIndex === 0 && reg_loopmarker.exec(m)) {
                                 return 'BRACKET';

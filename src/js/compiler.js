@@ -766,6 +766,112 @@ function rightBracketToRightOf(tokens, i) {
     return false;
 }
 
+// Expand directional rules marked with @ prefix
+// Only rules containing @ are expanded
+// @direction prefix: expands to 4 rules with rotated directions
+// @ObjectName or @ObjectVariant: expands to 4 rules with rotated object variants
+function expandDirectionalRules(rule, state) {
+    /*
+        rule = [ruleString, lineNumber, mixedCase]
+    */
+    let ruleString = rule[0];
+    let lineNumber = rule[1];
+    let mixedCase = rule[2];
+    
+    // Only expand rules that contain @ marker
+    if (!ruleString.includes('@')) {
+        return [rule]; // No @ marker, return as-is without expanding
+    }
+    
+    const directions = ['up', 'right', 'down', 'left'];
+    let expandedRules = [];
+    
+    // Check if rule starts with @direction 
+    let baseRule = ruleString;
+    let hasDirectionMarker = false;
+    let startDirectionIndex = -1;
+    
+    for (let dir = 0; dir < 4; dir++) {
+        const pattern = '@' + directions[dir];
+        if (baseRule.toLowerCase().startsWith(pattern + ' ')) {
+            hasDirectionMarker = true;
+            startDirectionIndex = dir;
+            baseRule = baseRule.substring(pattern.length).trim();
+            break;
+        }
+    }
+    
+    // Build single comprehensive map
+    // Maps each object name (variant or alias) to its variants array
+    const objectVariantsMap = {};
+    
+    if (state.legend_directionals && state.legend_directionals.length > 0) {
+        for (let entry of state.legend_directionals) {
+            const [alias, base, right, down, left] = entry;
+            const variants = [base, right, down, left];
+            
+            // Map alias and all variants to the same array
+            objectVariantsMap[alias] = variants;
+            objectVariantsMap[base] = variants;
+            objectVariantsMap[right] = variants;
+            objectVariantsMap[down] = variants;
+            objectVariantsMap[left] = variants;
+        }
+    }
+    
+    for (let rotation = 0; rotation < 4; rotation++) {
+        let rotatedRule = baseRule;
+        
+        // Replace @direction markers with rotated directions
+        for (let dir = 0; dir < 4; dir++) {
+            const fromDir = directions[dir];
+            const toDir = directions[(dir + rotation) % 4];
+            rotatedRule = rotatedRule.replace(new RegExp('@' + fromDir + '\\b', 'gi'), '@' + toDir);
+        }
+        
+        // Replace all @ObjectName with rotated variants
+        // Process objects in order of their name length (longest first) to avoid partial matches
+        const sortedNames = Object.keys(objectVariantsMap).sort((a, b) => b.length - a.length);
+        
+        for (let objName of sortedNames) {
+            const variants = objectVariantsMap[objName];
+            
+            // Only process if marked with @
+            const pattern = new RegExp('@' + objName + '\\b', 'gi');
+            if (pattern.test(rotatedRule)) {
+                // Find current index in variants array
+                const currentIdx = variants.indexOf(objName);
+                if (currentIdx >= 0) {
+                    // Rotate: new index = (current index + rotation) % 4
+                    const newIdx = (currentIdx + rotation) % 4;
+                    const rotatedVariant = variants[newIdx];
+                    rotatedRule = rotatedRule.replace(pattern, '@' + rotatedVariant);
+                }
+            }
+        }
+        
+        // Remove all @ symbols (they were just markers for expansion)
+        rotatedRule = rotatedRule.replace(/@/g, '');
+        
+        // Determine direction for this expanded rule
+        let ruleDirection;
+        if (hasDirectionMarker) {
+            // If rule started with @direction, rotate the direction
+            ruleDirection = directions[(startDirectionIndex + rotation) % 4];
+        } else {
+            // If no direction marker, default to 'up' for all rotations
+            ruleDirection = 'up';
+        }
+        
+        // Add the rule direction
+        rotatedRule = ruleDirection + ' ' + rotatedRule;
+        
+        expandedRules.push([rotatedRule, lineNumber, mixedCase]);
+    }
+    
+    return expandedRules;
+}
+
 function processRuleString(rule, state, curRules) {
     /*
 
@@ -1295,11 +1401,19 @@ First, let's check for 'X no X' on the RHS.
 
 function rulesToArray(state) {
     let oldrules = state.rules;
+    
+    // First, expand all directional rules marked with @
+    let expandedRules = [];
+    for (let i = 0; i < oldrules.length; i++) {
+        let expanded = expandDirectionalRules(oldrules[i], state);
+        expandedRules = expandedRules.concat(expanded);
+    }
+    
     let rules = [];
     let loops = [];
-    for (let i = 0; i < oldrules.length; i++) {
-        let lineNumber = oldrules[i][1];
-        let newrule = processRuleString(oldrules[i], state, rules);
+    for (let i = 0; i < expandedRules.length; i++) {
+        let lineNumber = expandedRules[i][1];
+        let newrule = processRuleString(expandedRules[i], state, rules);
         if (newrule === null) {
             continue;//error in processing string.
         }
