@@ -37,6 +37,28 @@ const  directionaggregates = {
 const relativeDirections = ['^', 'v', '<', '>', 'perpendicular', 'parallel'];
 const simpleAbsoluteDirections = ['up', 'down', 'left', 'right'];
 const simpleRelativeDirections = ['^', 'v', '<', '>'];
+
+// Direction rotation mapping for directional rule expansion (@syntax)
+// Clockwise rotation: up -> right -> down -> left -> up
+const directionRotationMap = {
+    'up': 'right',
+    'right': 'down',
+    'down': 'left',
+    'left': 'up',
+    '^': '>',
+    '>': 'v',
+    'v': '<',
+    '<': '^'
+};
+
+function rotateDirection(dir, times = 1) {
+    let result = dir;
+    for (let i = 0; i < times; i++) {
+        result = directionRotationMap[result] || result;
+    }
+    return result;
+}
+
 const reg_directions_only = /^(\>|\<|\^|v|up|down|left|right|moving|stationary|no|randomdir|random|horizontal|vertical|orthogonal|perpendicular|parallel|action)$/;//redeclaring here, i don't know wh
 
 const REGEX_HEX = /^#([0-9A-F]{3}){1,2}$/i;

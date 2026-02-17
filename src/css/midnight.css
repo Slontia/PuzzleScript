@@ -222,6 +222,11 @@ body {
     color: #C11DC1;
 }
 
+.cm-s-midnight span.cm-AT_PREFIX {
+    color: #9D4EDD;
+    font-weight: bold;
+}
+
 .cm-s-midnight span.cm-COMMAND {
     color: light-dark(#7b47db, #AE81FF);
 }
