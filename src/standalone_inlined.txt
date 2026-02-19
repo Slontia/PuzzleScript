@@ -14707,23 +14707,10 @@ function preprocessDirectionalLegends(state) {
             continue;
         }
 
-        for (let j = 0; j < directionalNames.length; j++) {
-            let name = directionalNames[j];
-            
-            // Check if the object is already in any collision layer
-            let alreadyInLayer = false;
-            for (let layerIndex = 0; layerIndex < state.collisionLayers.length; layerIndex++) {
-                if (state.collisionLayers[layerIndex].indexOf(name) !== -1) {
-                    alreadyInLayer = true;
-                    break;
-                }
-            }
-            
-            // Only add to collision layer if not already in any layer
-            if (!alreadyInLayer && state.collisionLayers[baseLayerIndex].indexOf(name) === -1) {
-                state.collisionLayers[baseLayerIndex].push(name);
-            }
-        }
+        // Do NOT automatically add rotated objects to the base object's collision layer
+        // This allows users to place them in different layers explicitly
+        // The old behavior forced all rotated variants into the same layer as the base
+        // which prevented separation of directional laser beams, etc.
 
         // Ensure alias is defined as a property (OR) if missing
         let alreadyProperty = false;
@@ -14742,6 +14729,57 @@ function preprocessDirectionalLegends(state) {
         // Register alias name for syntax highlighting
         if (state.names.indexOf(alias) === -1) {
             state.names.push(alias);
+        }
+    }
+}
+
+// Assign auto-created directional objects to their referenced layers
+// This ensures objects created by @ directives are assigned to appropriate collision layers
+// based on which property references them in COLLISIONLAYERS
+function assignAutoCreatedObjectsToLayers(state) {
+    // Build a map of which layer each property is in
+    let propertyLayerMap = {};
+    for (let layerIdx = 0; layerIdx < state.collisionLayers.length; layerIdx++) {
+        for (let i = 0; i < state.collisionLayers[layerIdx].length; i++) {
+            let name = state.collisionLayers[layerIdx][i];
+            propertyLayerMap[name] = layerIdx;
+        }
+    }
+    
+    // For each property, check its constituent objects
+    for (let propIdx = 0; propIdx < state.legend_properties.length; propIdx++) {
+        let prop = state.legend_properties[propIdx];
+        let propName = prop[0];
+        
+        // Check if this property itself is in a collision layer
+        if (propertyLayerMap[propName] === undefined) {
+            continue; // Property not in any layer, skip it
+        }
+        
+        let targetLayer = propertyLayerMap[propName];
+        
+        // For each object referenced by this property
+        for (let objIdx = 1; objIdx < prop.length; objIdx++) {
+            let objName = prop[objIdx];
+            
+            // Check if this object exists but is not in any collision layer
+            if (state.objects[objName] !== undefined) {
+                // Check if object is already in some layer
+                let isInLayer = false;
+                for (let layerIdx = 0; layerIdx < state.collisionLayers.length; layerIdx++) {
+                    if (state.collisionLayers[layerIdx].indexOf(objName) !== -1) {
+                        isInLayer = true;
+                        break;
+                    }
+                }
+                
+                // If not in any layer, add it to the property's layer
+                if (!isInLayer) {
+                    if (state.collisionLayers[targetLayer].indexOf(objName) === -1) {
+                        state.collisionLayers[targetLayer].push(objName);
+                    }
+                }
+            }
         }
     }
 }
@@ -14845,8 +14883,19 @@ function expandDirectionalRules(rule, state) {
     const directions = ['up', 'right', 'down', 'left'];
     let expandedRules = [];
     
+    // Extract and remove modifiers (late, rigid, random, +) from the beginning
+    // Note: We only extract actual rule modifiers, not directional keywords
+    let modifiers = '';
+    let ruleWithoutModifiers = ruleString;
+    const modifierPattern = /^(\+?\s*(?:late|rigid|random)\s+)*/i;
+    const matchModifiers = ruleString.match(modifierPattern);
+    if (matchModifiers && matchModifiers[0]) {
+        modifiers = matchModifiers[0].trim();
+        ruleWithoutModifiers = ruleString.substring(matchModifiers[0].length).trim();
+    }
+    
     // Check if rule starts with @direction 
-    let baseRule = ruleString;
+    let baseRule = ruleWithoutModifiers;
     let hasDirectionMarker = false;
     let startDirectionIndex = -1;
     
@@ -14855,7 +14904,8 @@ function expandDirectionalRules(rule, state) {
         if (baseRule.toLowerCase().startsWith(pattern + ' ')) {
             hasDirectionMarker = true;
             startDirectionIndex = dir;
-            baseRule = baseRule.substring(pattern.length).trim();
+            // Keep the @direction marker in baseRule - we need it for rotation!
+            // Don't remove it here; it will be replaced during the rotation loop
             break;
         }
     }
@@ -14893,11 +14943,49 @@ function expandDirectionalRules(rule, state) {
     for (let rotation = 0; rotation < 4; rotation++) {
         let rotatedRule = baseRule;
         
-        // Replace @direction markers with rotated directions
+        // Build a map of direction replacements for this rotation
+        // Key: @direction, Value: target direction (without @)
+        const directionReplacements = {};
         for (let dir = 0; dir < 4; dir++) {
             const fromDir = directions[dir];
             const toDir = directions[(dir + rotation) % 4];
-            rotatedRule = rotatedRule.replace(new RegExp('@' + fromDir + '\\b', 'gi'), '@' + toDir);
+            directionReplacements['@' + fromDir] = toDir;
+        }
+        
+        // Track which direction will be at the start if rule has @direction marker
+        let startDirection = '';
+        if (hasDirectionMarker && startDirectionIndex >= 0) {
+            // Get the rotated direction that will be at the start
+            startDirection = directionReplacements['@' + directions[startDirectionIndex]];
+        }
+        
+        // Replace @direction markers with a placeholder first to avoid interference
+        // Use unique markers that won't appear elsewhere
+        // But SKIP @direction at the beginning if it's a start marker - we'll handle it separately
+        const placeholders = {};
+        for (let key in directionReplacements) {
+            // Skip replacing the @direction at the start of the rule - we'll handle it with startDirection
+            if (hasDirectionMarker && key === '@' + directions[startDirectionIndex]) {
+                // Don't replace this one, we'll remove it entirely and add it back later
+                const placeholder = '___DIRECTION_STARTMARKER_' + startDirectionIndex + '___';
+                placeholders[key] = placeholder;
+                rotatedRule = rotatedRule.replace(new RegExp('^' + key + '\\s+'), placeholder);
+            } else {
+                const placeholder = '___DIRECTION_' + directionReplacements[key].toUpperCase() + '___';
+                placeholders[key] = placeholder;
+                rotatedRule = rotatedRule.replace(new RegExp(key + '\\b', 'gi'), placeholder);
+            }
+        }
+        
+        // Now replace placeholders with the actual directions (without @)
+        for (let key in placeholders) {
+            const placeholder = placeholders[key];
+            if (placeholder.includes('STARTMARKER')) {
+                // Remove the start marker entirely - it will be added back via startDirection
+                rotatedRule = rotatedRule.split(placeholder).join('');
+            } else {
+                rotatedRule = rotatedRule.split(placeholder).join(directionReplacements[key]);
+            }
         }
         
         // Replace all @ObjectName and @CollectionName with rotated variants
@@ -14928,18 +15016,15 @@ function expandDirectionalRules(rule, state) {
         // Remove all @ symbols (they were just markers for expansion)
         rotatedRule = rotatedRule.replace(/@/g, '');
         
-        // Determine direction for this expanded rule
-        let ruleDirection;
-        if (hasDirectionMarker) {
-            // If rule started with @direction, rotate the direction
-            ruleDirection = directions[(startDirectionIndex + rotation) % 4];
-        } else {
-            // If no direction marker, default to 'up' for all rotations
-            ruleDirection = 'up';
+        // Add the rule direction if present
+        if (startDirection.length > 0) {
+            rotatedRule = startDirection + ' ' + rotatedRule;
         }
         
-        // Add the rule direction
-        rotatedRule = ruleDirection + ' ' + rotatedRule;
+        // Add modifiers at the very beginning
+        if (modifiers.length > 0) {
+            rotatedRule = modifiers + ' ' + rotatedRule;
+        }
         
         expandedRules.push([rotatedRule, lineNumber, mixedCase]);
     }
@@ -17545,6 +17630,9 @@ function loadFile(str) {
     // Process legend lines in levels section BEFORE generateExtraMembers
     // so that glyphDict is built with all legend definitions
     preprocessLegendLinesInLevels(state);
+
+    // Assign auto-created directional objects to their referenced layers
+    assignAutoCreatedObjectsToLayers(state);
 
     generateExtraMembers(state);
     generateMasks(state);
