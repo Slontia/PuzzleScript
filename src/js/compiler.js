@@ -1212,22 +1212,32 @@ function expandDirectionalRules(rule, state) {
         const sortedCollectionNames = Object.keys(collectionVariantsMap).sort((a, b) => b.length - a.length);
         const sortedNames = sortedObjectNames.concat(sortedCollectionNames);
         
+        // Track which variants have been processed to avoid chain replacements
+        const processedVariants = new Set();
+        
         for (let name of sortedNames) {
+            // Skip if this name is part of an already-processed variant group
+            if (processedVariants.has(name)) continue;
+            
             // Determine which map to use
             const variants = objectVariantsMap[name] || collectionVariantsMap[name];
             if (!variants) continue;
             
             // Only process if marked with @
             const pattern = new RegExp('@' + name + '\\b', 'gi');
-            if (pattern.test(rotatedRule)) {
-                // Find current index in variants array
-                const currentIdx = variants.indexOf(name);
-                if (currentIdx >= 0) {
-                    // Rotate: new index = (current index + rotation) % 4
-                    const newIdx = (currentIdx + rotation) % 4;
-                    const rotatedVariant = variants[newIdx];
-                    rotatedRule = rotatedRule.replace(pattern, '@' + rotatedVariant);
-                }
+            
+            // Find current index in variants array
+            const currentIdx = variants.indexOf(name);
+            if (currentIdx >= 0 && pattern.test(rotatedRule)) {
+                // Mark all variants in this group as processed to prevent chain replacements
+                variants.forEach(v => processedVariants.add(v));
+                
+                // Rotate: new index = (current index + rotation) % 4
+                const newIdx = (currentIdx + rotation) % 4;
+                const rotatedVariant = variants[newIdx];
+                // Replace all occurrences (the 'g' flag in the pattern makes this work)
+                // Need to create a new pattern since test() consumed the previous one
+                rotatedRule = rotatedRule.replace(new RegExp('@' + name + '\\b', 'gi'), '@' + rotatedVariant);
             }
         }
         
