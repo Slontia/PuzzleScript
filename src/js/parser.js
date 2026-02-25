@@ -1568,6 +1568,10 @@ let codeMirrorFn = function () {
                                     return 'DIRECTION';
                                 } else if (m === 'random') {
                                     return 'DIRECTION';
+                                } else if (m === 'clockwise') {
+                                    return 'DIRECTION';
+                                } else if (m === 'counterclockwise') {
+                                    return 'DIRECTION';
                                 } else if (commandwords.indexOf(m) >= 0) {
                                     if (m === 'message') {
                                         state.tokenIndex = -4;

@@ -1085,6 +1085,186 @@ function rightBracketToRightOf(tokens, i) {
 // Only rules containing @ are expanded
 // @direction prefix: expands to 4 rules with rotated directions
 // @ObjectName or @ObjectVariant: expands to 4 rules with rotated object variants
+function expandRotationRules(rule, state) {
+    /*
+        rule = [ruleString, lineNumber, mixedCase]
+        
+        Expands rules containing 'clockwise' or 'counterclockwise' keywords
+        into multiple rules for each directional variant.
+        
+        For example:
+        [ > clockwise Arrow ] -> [ > clockwise Arrow ]
+        
+        becomes:
+        [ > ArrowUp ] -> [ > ArrowRight ]
+        [ > ArrowRight ] -> [ > ArrowDown ]
+        [ > ArrowDown ] -> [ > ArrowLeft ]
+        [ > ArrowLeft ] -> [ > ArrowUp ]
+        
+        And for property-based aliases like:
+        emitter_set = emitter_up @ emitter_right / emitter_down / emitter_left
+        
+        [ > emitter_set ] -> [ > clockwise emitter_set ]
+        
+        becomes:
+        [ > emitter_up ] -> [ > emitter_right ]
+        [ > emitter_right ] -> [ > emitter_down ]
+        [ > emitter_down ] -> [ > emitter_left ]
+        [ > emitter_left ] -> [ > emitter_up ]
+    */
+    let ruleString = rule[0];
+    let lineNumber = rule[1];
+    let mixedCase = rule[2];
+    
+    // Check if rule contains clockwise or counterclockwise
+    if (!ruleString.includes('clockwise') && !ruleString.includes('counterclockwise')) {
+        return [rule]; // No rotation, return as-is
+    }
+    
+    // Build variants map for directional objects and properties
+    // Check both legend_directionals and legend_properties to find all directional definitions
+    const variantsMap = {};
+    
+    if (state.legend_directionals && state.legend_directionals.length > 0) {
+        for (const entry of state.legend_directionals) {
+            const [alias, base, right, down, left] = entry;
+            const variants = [base, right, down, left];
+            // Map both the alias and individual variants
+            variantsMap[alias] = variants;
+            variantsMap[base] = variants;
+            variantsMap[right] = variants;
+            variantsMap[down] = variants;
+            variantsMap[left] = variants;
+        }
+    }
+    
+    // Do not infer directional variants from expanded legend_properties; use legend_directionals only.
+    
+    // Find which object/property is being rotated
+    let rotationObject = null;
+    let rotationType = null;
+    let rotationIsProperty = false;
+    
+    // Look for pattern: "clockwise ObjectName" or "counterclockwise ObjectName"
+    const tokens = ruleString.split(/\s+/);
+    for (let i = 0; i < tokens.length - 1; i++) {
+        if ((tokens[i] === 'clockwise' || tokens[i] === 'counterclockwise') && i + 1 < tokens.length) {
+            const objectName = tokens[i + 1];
+            if (variantsMap[objectName]) {
+                rotationType = tokens[i];
+                rotationObject = objectName;
+                break;
+            } else if (state.propertiesDict && state.propertiesDict[objectName]) {
+                rotationType = tokens[i];
+                rotationObject = objectName;
+                rotationIsProperty = true;
+                break;
+            }
+        }
+    }
+    
+    if (!rotationObject) {
+        // No valid rotation object found - return original rule as-is
+        // This might happen if 'clockwise' is used with a non-directional object
+        return [rule];
+    }
+    
+    const rotationAmount = rotationType === 'clockwise' ? 1 : 3;
+
+    if (rotationIsProperty) {
+        const expandedRules = [];
+        const aliases = Array.from(new Set(state.propertiesDict[rotationObject] || []));
+
+        const normalizedRuleString = ruleString
+            .replace(/\[/g, ' [ ')
+            .replace(/\]/g, ' ] ')
+            .replace(/\|/g, ' | ')
+            .replace(/\-\>/g, ' -> ')
+            .trim();
+        const baseTokens = normalizedRuleString.split(/\s+/).filter(token => token.length > 0);
+
+        const concreteObjects = [];
+        for (let alias of aliases) {
+            const variants = variantsMap[alias];
+            if (variants) {
+                for (let variant of variants) {
+                    concreteObjects.push(variant);
+                }
+            } else {
+                concreteObjects.push(alias);
+            }
+        }
+
+        const uniqueConcreteObjects = Array.from(new Set(concreteObjects));
+
+        for (let concrete of uniqueConcreteObjects) {
+            const variants = variantsMap[concrete];
+
+            const tokens = baseTokens.slice();
+
+            for (let i = 0; i < tokens.length - 1; i++) {
+                const token = tokens[i].toLowerCase();
+                if ((token === 'clockwise' || token === 'counterclockwise')) {
+                    const target = tokens[i + 1].toLowerCase();
+                    if (target === rotationObject || target === '@' + rotationObject) {
+                        const tokenRotationAmount = token === 'clockwise' ? 1 : 3;
+                        let rotated = concrete;
+                        if (variants) {
+                            const currentIdx = variants.indexOf(concrete);
+                            if (currentIdx >= 0) {
+                                const rotatedIdx = (currentIdx + tokenRotationAmount) % 4;
+                                rotated = variants[rotatedIdx];
+                            }
+                        }
+                        tokens.splice(i, 2, rotated);
+                        i -= 1;
+                    }
+                }
+            }
+
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i].toLowerCase();
+                if (token === rotationObject || token === '@' + rotationObject) {
+                    tokens[i] = concrete;
+                }
+            }
+
+            const newRuleString = tokens.join(' ');
+
+            expandedRules.push([newRuleString, lineNumber, mixedCase]);
+        }
+
+        return expandedRules;
+    }
+
+    // Generate 4 rules, one for each rotation state
+    const variants = variantsMap[rotationObject];
+    const expandedRules = [];
+
+    for (let variantIndex = 0; variantIndex < 4; variantIndex++) {
+        let newRuleString = ruleString;
+
+        const currentVariant = variants[variantIndex];
+        const rotatedIdx = (variantIndex + rotationAmount) % 4;
+        const rotatedVariant = variants[rotatedIdx];
+
+        // First, replace "clockwise ObjectName" and "counterclockwise ObjectName" 
+        const clockwisePattern = new RegExp('clockwise\\s+' + rotationObject + '\\b', 'gi');
+        const counterclockwisePattern = new RegExp('counterclockwise\\s+' + rotationObject + '\\b', 'gi');
+
+        newRuleString = newRuleString.replace(clockwisePattern, rotatedVariant);
+        newRuleString = newRuleString.replace(counterclockwisePattern, rotatedVariant);
+
+        // Now replace remaining occurrences of the plain object name
+        const plainObjectPattern = new RegExp('\\b' + rotationObject + '\\b', 'gi');
+        newRuleString = newRuleString.replace(plainObjectPattern, currentVariant);
+
+        expandedRules.push([newRuleString, lineNumber, mixedCase]);
+    }
+
+    return expandedRules;
+}
+
 function expandDirectionalRules(rule, state) {
     /*
         rule = [ruleString, lineNumber, mixedCase]
@@ -1258,6 +1438,18 @@ function expandDirectionalRules(rule, state) {
     }
     
     return expandedRules;
+}
+
+function preprocessRotationOperations(rule, state) {
+    /*
+        Preprocess clockwise and counterclockwise operations before rule parsing.
+        This should NOT transform individual rules, but rather indicate they need
+        expansion into multiple rules later.
+        
+        Returns the original rule unchanged - the actual expansion happens in
+        expandRotationRules()
+    */
+    return rule;
 }
 
 function processRuleString(rule, state, curRules) {
@@ -1797,11 +1989,25 @@ function rulesToArray(state) {
         expandedRules = expandedRules.concat(expanded);
     }
     
+    // Second, expand all rotation rules containing clockwise/counterclockwise
+    let rotationExpandedRules = [];
+    for (let i = 0; i < expandedRules.length; i++) {
+        let expanded = expandRotationRules(expandedRules[i], state);
+        rotationExpandedRules = rotationExpandedRules.concat(expanded);
+    }
+    
+    // Third, preprocess clockwise/counterclockwise operations (if any remain)
+    let preprocessedRules = [];
+    for (let i = 0; i < rotationExpandedRules.length; i++) {
+        let preprocessed = preprocessRotationOperations(rotationExpandedRules[i], state);
+        preprocessedRules.push(preprocessed);
+    }
+    
     let rules = [];
     let loops = [];
-    for (let i = 0; i < expandedRules.length; i++) {
-        let lineNumber = expandedRules[i][1];
-        let newrule = processRuleString(expandedRules[i], state, rules);
+    for (let i = 0; i < preprocessedRules.length; i++) {
+        let lineNumber = preprocessedRules[i][1];
+        let newrule = processRuleString(preprocessedRules[i], state, rules);
         if (newrule === null) {
             continue;//error in processing string.
         }
@@ -2195,6 +2401,7 @@ function makeSpawnedObjectsStationary(state, rule, lineNumber) {
     }
 
 }
+
 
 function concretizeMovingRule(state, rule, lineNumber) {
 
