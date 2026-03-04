@@ -15173,38 +15173,41 @@ function expandDirectionalRules(rule, state) {
         }
         
         // Replace all @ObjectName and @CollectionName with rotated variants
-        // Process in order of their name length (longest first) to avoid partial matches
-        const sortedObjectNames = Object.keys(objectVariantsMap).sort((a, b) => b.length - a.length);
-        const sortedCollectionNames = Object.keys(collectionVariantsMap).sort((a, b) => b.length - a.length);
-        const sortedNames = sortedObjectNames.concat(sortedCollectionNames);
-        
-        // Track which variants have been processed to avoid chain replacements
-        const processedVariants = new Set();
-        
-        for (let name of sortedNames) {
-            // Skip if this name is part of an already-processed variant group
-            if (processedVariants.has(name)) continue;
-            
-            // Determine which map to use
-            const variants = objectVariantsMap[name] || collectionVariantsMap[name];
-            if (!variants) continue;
-            
-            // Only process if marked with @
-            const pattern = new RegExp('@' + name + '\\b', 'gi');
-            
-            // Find current index in variants array
-            const currentIdx = variants.indexOf(name);
-            if (currentIdx >= 0 && pattern.test(rotatedRule)) {
-                // Mark all variants in this group as processed to prevent chain replacements
-                variants.forEach(v => processedVariants.add(v));
-                
-                // Rotate: new index = (current index + rotation) % 4
+        // Use group-level replacements to avoid chain-rotating variants in the same group.
+        const variantGroups = [];
+        const seenGroupKeys = new Set();
+        const escapeRegExp = function (value) {
+            return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        };
+
+        const addVariantGroup = function (variants) {
+            if (!variants || variants.length !== 4) return;
+            const key = variants.join('|');
+            if (seenGroupKeys.has(key)) return;
+            seenGroupKeys.add(key);
+            variantGroups.push(variants);
+        };
+
+        Object.values(objectVariantsMap).forEach(addVariantGroup);
+        Object.values(collectionVariantsMap).forEach(addVariantGroup);
+
+        for (let variants of variantGroups) {
+            const nameToIndex = {};
+            for (let i = 0; i < variants.length; i++) {
+                nameToIndex[variants[i].toLowerCase()] = i;
+            }
+
+            const sortedVariants = variants.slice().sort((a, b) => b.length - a.length);
+            const pattern = new RegExp('@(' + sortedVariants.map(escapeRegExp).join('|') + ')\\b', 'gi');
+            rotatedRule = rotatedRule.replace(pattern, function (match, name) {
+                const currentIdx = nameToIndex[name.toLowerCase()];
+                if (currentIdx === undefined) {
+                    return match;
+                }
                 const newIdx = (currentIdx + rotation) % 4;
                 const rotatedVariant = variants[newIdx];
-                // Replace all occurrences (the 'g' flag in the pattern makes this work)
-                // Need to create a new pattern since test() consumed the previous one
-                rotatedRule = rotatedRule.replace(new RegExp('@' + name + '\\b', 'gi'), '@' + rotatedVariant);
-            }
+                return '@' + rotatedVariant;
+            });
         }
         
         // Remove all @ symbols (they were just markers for expansion)
