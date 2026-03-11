@@ -598,6 +598,11 @@ function loadLevelFromStateTarget(state, levelindex, target, randomseed) {
 	loadLevelFromLevelDat(state, state.levels[levelindex], randomseed);
 	restoreLevel(target);
 	restartTarget = target;
+	
+	// Regenerate glyph images when switching levels in editor mode
+	if (levelEditorOpened && typeof regenSpriteImages === 'function') {
+		regenSpriteImages();
+	}
 }
 
 function loadLevelFromState(state, levelindex, randomseed) {
@@ -612,6 +617,11 @@ function loadLevelFromState(state, levelindex, randomseed) {
 		}
 	}
 	loadLevelFromLevelDat(state, leveldat, randomseed);
+	
+	// Regenerate glyph images when switching levels in editor mode
+	if (levelEditorOpened && typeof regenSpriteImages === 'function') {
+		regenSpriteImages();
+	}
 }
 
 let sprites = [

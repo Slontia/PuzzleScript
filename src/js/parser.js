@@ -212,7 +212,7 @@ let codeMirrorFn = function () {
         if (state.legend_directionals && state.legend_directionals.length > 0) {
             for (let i = 0; i < state.legend_directionals.length; i++) {
                 let entry = state.legend_directionals[i];
-                if (entry[1] === normalized || entry[2] === normalized || entry[3] === normalized || entry[4] === normalized) {
+                if (entry[0] === normalized || entry[1] === normalized || entry[2] === normalized || entry[3] === normalized || entry[4] === normalized) {
                     return;
                 }
             }

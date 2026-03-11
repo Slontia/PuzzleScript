@@ -108,7 +108,14 @@ function regenSpriteImages() {
     }
 
     if (canOpenEditor) {
-        generateGlyphImages();
+        // In level editor mode, use the current level's glyphDict if available
+        if (levelEditorOpened && curlevel >= 0 && curlevel < state.levels.length) {
+            const currentLevel = state.levels[curlevel];
+            const levelGlyphDict = currentLevel ? currentLevel.glyphDict : undefined;
+            generateGlyphImages(levelGlyphDict);
+        } else {
+            generateGlyphImages();
+        }
     }
 }
 
@@ -138,17 +145,20 @@ function makeSpriteCanvas(name) {
 }
 
 
-function generateGlyphImages() {
+function generateGlyphImages(customGlyphDict) {
     if (cellwidth === 0 || cellheight === 0) {
         return;
     }
     glyphImagesCorrespondance = [];
     glyphImages = [];
 
+    // Use custom glyphDict if provided (for level-specific legends), otherwise use global
+    const glyphDict = customGlyphDict || state.glyphDict;
+
     const seenobjects = {};
     for (var n of state.glyphOrder) {
-        if (n.length == 1 && state.glyphDict.hasOwnProperty(n)) {
-            var g = state.glyphDict[n];
+        if (n.length == 1 && glyphDict.hasOwnProperty(n)) {
+            var g = glyphDict[n];
 
             /* hide duplicate entries from editor palette*/
             var trace = g.join(",");

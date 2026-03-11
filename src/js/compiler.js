@@ -412,7 +412,12 @@ function generateExtraMembers(state) {
     state.backgroundlayer = backgroundlayer;
 }
 
-function levelFromString(state, level) {
+function levelFromString(state, level, levelGlyphDict) {
+    // Use level-specific glyphDict if provided, otherwise use the default
+    if (!levelGlyphDict) {
+        levelGlyphDict = state.glyphDict;
+    }
+    
     let backgroundlayer = state.backgroundlayer;
     let backgroundid = state.backgroundid;
     let backgroundLayerMask = state.layerMasks[backgroundlayer];
@@ -425,7 +430,7 @@ function levelFromString(state, level) {
             if (ch.length === 0) {
                 ch = level[j + 1].charAt(level[j + 1].length - 1);
             }
-            let mask = state.glyphDict[ch];
+            let mask = levelGlyphDict[ch];
 
             if (mask === undefined) {
                 if (state.propertiesDict[ch] === undefined) {
@@ -474,9 +479,56 @@ function preprocessLegendLinesInLevels(state) {
     if (!state.original_case_names) state.original_case_names = {};
     if (!state.original_line_numbers) state.original_line_numbers = {};
 
-    // Track character definitions to handle "last definition wins" logic
-    let charDefinitions = {}; // candname -> {definition, index, lineNumber}
+    // Track legend state for each actual level (not legend definition lines)
+    // Map: level data object -> legend state at that level
+    if (!state.levelGlyphDictMap) {
+        state.levelGlyphDictMap = new Map();
+    }
 
+    // Helper function to make a copy of legend state
+    function copyLegendState() {
+        return {
+            legend_synonyms: state.legend_synonyms.map(s => s.concat([])),
+            legend_aggregates: state.legend_aggregates.map(a => a.concat([])),
+            legend_properties: state.legend_properties.map(p => p.concat([]))
+        };
+    }
+
+    // Helper function to apply a legend entry to current state
+    function applyLegendEntry(candname, tokens, lineNumber) {
+        // Remove old definitions of this character
+        state.legend_synonyms = state.legend_synonyms.filter(syn => syn[0] !== candname);
+        state.legend_aggregates = state.legend_aggregates.filter(agg => agg[0] !== candname);
+        state.legend_properties = state.legend_properties.filter(prop => prop[0] !== candname);
+
+        // Add the new definition
+        if (tokens.length === 3) {
+            // SYNONYM: A = B
+            let synonym = [tokens[0], tokens[2]];
+            synonym.lineNumber = lineNumber;
+            state.legend_synonyms.push(synonym);
+        } else if (tokens.length > 3 && tokens[3] === 'and') {
+            // AGGREGATE: A = B and C [ and D ...]
+            let newlegend = [tokens[0]];
+            for (let j = 2; j < tokens.length; j += 2) {
+                newlegend.push(tokens[j]);
+            }
+            newlegend.lineNumber = lineNumber;
+            state.legend_aggregates.push(newlegend);
+        } else if (tokens.length > 3 && tokens[3] === 'or') {
+            // PROPERTY: A = B or C [ or D ...]
+            let newlegend = [tokens[0]];
+            for (let j = 2; j < tokens.length; j += 2) {
+                newlegend.push(tokens[j]);
+            }
+            newlegend.lineNumber = lineNumber;
+            state.legend_properties.push(newlegend);
+        }
+    }
+
+    // Process levels in order, tracking legend state
+    let hasLegendDefinitions = false;
+    
     for (let i = 0; i < state.levels.length; i++) {
         let level = state.levels[i];
         if (!level || level.length === 0 || typeof level[1] !== 'string') {
@@ -491,7 +543,6 @@ function preprocessLegendLinesInLevels(state) {
             // Parse the legend line into tokens, converting to lowercase
             let tokens = legendLine.match(/[^\s=]+|=/g) || [];
             tokens = tokens.map(t => t.toLowerCase());
-            state.current_line_wip_array = tokens;
             
             // Store line number for error reporting
             state.lineNumber = level[0];
@@ -517,54 +568,20 @@ function preprocessLegendLinesInLevels(state) {
                     state.original_line_numbers[candname] = state.lineNumber;
                 }
                 
-                // Store definition info for "last wins" logic
-                charDefinitions[candname] = {
-                    tokens: tokens,
-                    index: i,
-                    lineNumber: state.lineNumber
-                };
+                // Apply the legend entry to current state
+                applyLegendEntry(candname, tokens, state.lineNumber);
+                hasLegendDefinitions = true;
             }
-        }
-    }
-
-    // Now process all collected character definitions
-    // First, remove old definitions of characters that will be redefined
-    for (let candname in charDefinitions) {
-        // Remove from existing arrays
-        state.legend_synonyms = state.legend_synonyms.filter(syn => syn[0] !== candname);
-        state.legend_aggregates = state.legend_aggregates.filter(agg => agg[0] !== candname);
-        state.legend_properties = state.legend_properties.filter(prop => prop[0] !== candname);
-    }
-
-    // Now add all new definitions
-    for (let candname in charDefinitions) {
-        let def = charDefinitions[candname];
-        let tokens = def.tokens;
-        
-        // Add to appropriate legend array
-        if (tokens.length === 3) {
-            // SYNONYM: A = B
-            let synonym = [tokens[0], tokens[2]];
-            synonym.lineNumber = def.lineNumber;
-            state.legend_synonyms.push(synonym);
-        } else if (tokens.length > 3 && tokens[3] === 'and') {
-            // AGGREGATE: A = B and C [ and D ...]
-            // tokens = [name, '=', item1, 'and', item2, 'and', item3, ...]
-            let newlegend = [tokens[0]];
-            for (let j = 2; j < tokens.length; j += 2) {
-                newlegend.push(tokens[j]);
+            // Note: don't record anything for legend definition lines
+        } else if (level[0] === '\n') {
+            // Message - skip
+            continue;
+        } else {
+            // This is a regular level
+            // Only record legend state if there are legend-in-level definitions
+            if (hasLegendDefinitions) {
+                state.levelGlyphDictMap.set(level, copyLegendState());
             }
-            newlegend.lineNumber = def.lineNumber;
-            state.legend_aggregates.push(newlegend);
-        } else if (tokens.length > 3 && tokens[3] === 'or') {
-            // PROPERTY: A = B or C [ or D ...]
-            // tokens = [name, '=', item1, 'or', item2, 'or', item3, ...]
-            let newlegend = [tokens[0]];
-            for (let j = 2; j < tokens.length; j += 2) {
-                newlegend.push(tokens[j]);
-            }
-            newlegend.lineNumber = def.lineNumber;
-            state.legend_properties.push(newlegend);
         }
     }
 }
@@ -588,14 +605,9 @@ function rotateSpriteMatrix90(matrix) {
 
 function autoGenerateCollectionDirections(state) {
     // Auto-generate missing collection directions based on directional mappings
-    console.log("[autoGenerateCollectionDirections] Starting...");
-    
     if (!state.legend_directionals || state.legend_directionals.length === 0) {
-        console.log("[autoGenerateCollectionDirections] No legend_directionals found");
         return;
     }
-
-    console.log("[autoGenerateCollectionDirections] Found legend_directionals:", state.legend_directionals.length);
     
     // Build a map of directional variants
     // variantsMap[name] = [up, right, down, left]
@@ -618,9 +630,6 @@ function autoGenerateCollectionDirections(state) {
         variantsMap[left] = variants;
     }
 
-    console.log('[autoGenerateCollectionDirections] variantsMap keys:', Object.keys(variantsMap).length);
-    console.log('[autoGenerateCollectionDirections] variantsMap sample:', Object.keys(variantsMap).slice(0, 10));
-
     // Process collection directionals that need auto-generation
     for (let i = 0; i < state.legend_directionals.length; i++) {
         let entry = state.legend_directionals[i];
@@ -642,8 +651,6 @@ function autoGenerateCollectionDirections(state) {
         let downOriginal = state.original_case_names[down] || down;
         let leftOriginal = state.original_case_names[left] || left;
         
-        console.log(`[autoGenerateCollectionDirections] Processing collection: ${alias} = ${base} @ ${right} / ${down} / ${left}`);
-
         // Find the base collection definition
         let baseCollectionDef = null;
         for (let prop of state.legend_properties) {
@@ -660,7 +667,6 @@ function autoGenerateCollectionDirections(state) {
 
         // Extract the objects from the base collection
         let baseObjects = baseCollectionDef.slice(1);
-        console.log(`[autoGenerateCollectionDirections] Found baseObjects for ${base}:`, baseObjects);
 
         // Check if directions already exist
         let rightExists = false, downExists = false, leftExists = false;
@@ -672,15 +678,11 @@ function autoGenerateCollectionDirections(state) {
 
         // For each missing direction, generate it by rotating objects
         if (!rightExists) {
-            console.log(`[autoGenerateCollectionDirections] Generating ${right}...`);
             let rotatedObjects = rotateCollectionObjects(baseObjects, 1, variantsMap, state);
-            console.log(`[autoGenerateCollectionDirections] rotateCollectionObjects returned:`, rotatedObjects);
             if (rotatedObjects && rotatedObjects.length > 0) {
                 let rotatedDef = [right].concat(rotatedObjects);
                 rotatedDef.lineNumber = lineNumber;
                 state.legend_properties.push(rotatedDef);
-                console.log(`[autoGenerateCollectionDirections] Created ${right} =`, rotatedDef);
-                console.log(`[autoGenerateCollectionDirections] Added to state.names:`, right);
                 if (state.names.indexOf(right) === -1) {
                     state.names.push(right);
                 }
@@ -689,11 +691,8 @@ function autoGenerateCollectionDirections(state) {
                     state.original_case_names[right] = rightOriginal;
                 }
             } else {
-                console.log(`[autoGenerateCollectionDirections] Failed to generate ${right} - rotatedObjects is null or empty`);
                 logError(`Cannot auto-generate collection "${rightOriginal.toUpperCase()}" - objects in "${base.toUpperCase()}" don't have directional definitions.`, lineNumber);
             }
-        } else {
-            console.log(`[autoGenerateCollectionDirections] ${right} already exists, skipping`);
         }
 
         if (!downExists) {
@@ -746,7 +745,20 @@ function autoGenerateCollectionDirections(state) {
             let aliasDef = [alias, base, right, down, left];
             aliasDef.lineNumber = lineNumber;
             state.legend_properties.push(aliasDef);
-            console.log(`[autoGenerateCollectionDirections] Created alias ${alias} = ${base} or ${right} or ${down} or ${left}`);
+        }
+    }
+}
+
+function buildDirectionalPropertyLinks(state) {
+    state.directionalPropertyLinks = {};
+    if (!state.legend_directionals) return;
+    for (let entry of state.legend_directionals) {
+        if (entry.length > 5 && entry[5] === true) {
+            // Collection directional: [alias, up, right, down, left, true]
+            let variants = [entry[1], entry[2], entry[3], entry[4]];
+            for (let v of variants) {
+                state.directionalPropertyLinks[v] = variants;
+            }
         }
     }
 }
@@ -756,8 +768,6 @@ function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
     // For each object/collection in baseObjects, look up its directional variants
     // and select the appropriate rotated version
     let result = [];
-    
-    console.log(`[rotateCollectionObjects] baseObjects:`, baseObjects, `rotations:`, rotations);
     
     // Direction rotation mapping for name-based rotation
     const dirMap = { 'u': 'r', 'r': 'd', 'd': 'l', 'l': 'u' };
@@ -787,7 +797,6 @@ function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
             if ((state.objects && state.objects.hasOwnProperty(rotatedName)) || 
                 (state.propertiesDict && state.propertiesDict.hasOwnProperty(rotatedName)) ||
                 (state.aggregatesDict && state.aggregatesDict.hasOwnProperty(rotatedName))) {
-                console.log(`[rotateCollectionObjects] Name-based rotation: ${objName} -> ${rotatedName}`);
                 return rotatedName;
             }
         }
@@ -803,7 +812,6 @@ function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
             if ((state.objects && state.objects.hasOwnProperty(rotatedName)) || 
                 (state.propertiesDict && state.propertiesDict.hasOwnProperty(rotatedName)) ||
                 (state.aggregatesDict && state.aggregatesDict.hasOwnProperty(rotatedName))) {
-                console.log(`[rotateCollectionObjects] Name-based rotation: ${objName} -> ${rotatedName}`);
                 return rotatedName;
             }
         }
@@ -819,11 +827,8 @@ function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
             // Fall back to variantsMap-based rotation
             let variants = variantsMap[obj];
             
-            console.log(`[rotateCollectionObjects] obj=${obj}, trying variantsMap, variants=`, variants);
-            
             if (!variants) {
                 // Object/collection doesn't have directional variants defined
-                console.log(`[rotateCollectionObjects] No variants found for ${obj}, and name-based rotation failed`);
                 return null;
             }
             
@@ -836,19 +841,14 @@ function rotateCollectionObjects(baseObjects, rotations, variantsMap, state) {
                 }
             }
             
-            console.log(`[rotateCollectionObjects] ${obj} is at index ${currentIndex} in variants`);
-            
             if (currentIndex === -1) {
                 // Shouldn't happen, but handle it
-                console.log(`[rotateCollectionObjects] Could not find ${obj} in its variants array!`);
                 return null;
             }
             
             // Calculate the rotated index
             let rotatedIndex = (currentIndex + rotations) % 4;
             rotatedObject = variants[rotatedIndex];
-            
-            console.log(`[rotateCollectionObjects] ${obj}[${currentIndex}] + ${rotations} -> [${rotatedIndex}] = ${rotatedObject}`);
         }
         
         result.push(rotatedObject);
@@ -1002,6 +1002,75 @@ function assignAutoCreatedObjectsToLayers(state) {
     }
 }
 
+// Generate level-specific glyphDicts based on levelGlyphDictMap
+function generateLevelGlyphDicts(state) {
+    if (!state.levelGlyphDictMap || state.levelGlyphDictMap.size === 0) {
+        // No level-specific legend states, use default glyphDict for all levels
+        return;
+    }
+
+    let blankMask = [];
+    for (let i = 0; i < state.collisionLayers.length; i++) {
+        blankMask.push(-1);
+    }
+
+    // Generate glyphDict for each level's legend state
+    for (let [levelData, legendState] of state.levelGlyphDictMap) {
+        let levelGlyphDict = {};
+
+        // Add objects
+        for (let layerIndex = 0; layerIndex < state.collisionLayers.length; layerIndex++) {
+            for (let j = 0; j < state.collisionLayers[layerIndex].length; j++) {
+                let n = state.collisionLayers[layerIndex][j];
+                if (n in state.objects) {
+                    let o = state.objects[n];
+                    let mask = blankMask.concat([]);
+                    mask[o.layer] = o.id;
+                    levelGlyphDict[n] = mask;
+                }
+            }
+        }
+
+        // Add synonyms from level's legend state
+        for (let i = 0; i < legendState.legend_synonyms.length; i++) {
+            let dat = legendState.legend_synonyms[i];
+            let key = dat[0];
+            let val = dat[1];
+            if (levelGlyphDict[val] !== undefined) {
+                levelGlyphDict[key] = levelGlyphDict[val];
+            }
+        }
+
+        // Add aggregates from level's legend state
+        for (let i = 0; i < legendState.legend_aggregates.length; i++) {
+            let dat = legendState.legend_aggregates[i];
+            let key = dat[0];
+            let vals = dat.slice(1);
+            let allValsFound = true;
+            for (let j = 0; j < vals.length; j++) {
+                if (levelGlyphDict[vals[j]] === undefined) {
+                    allValsFound = false;
+                    break;
+                }
+            }
+            if (allValsFound) {
+                let mask = blankMask.concat([]);
+                for (let j = 1; j < dat.length; j++) {
+                    let n = dat[j];
+                    let o = state.objects[n];
+                    if (o !== undefined && mask[o.layer] === -1) {
+                        mask[o.layer] = o.id;
+                    }
+                }
+                levelGlyphDict[key] = mask;
+            }
+        }
+
+        // Store the glyphDict for this specific level data
+        levelData.glyphDict = levelGlyphDict;
+    }
+}
+
 //also assigns glyphDict
 function levelsToArray(state) {
     let levels = state.levels;
@@ -1026,7 +1095,16 @@ function levelsToArray(state) {
             }
             processedLevels.push(o);
         } else {
-            let o = levelFromString(state, level);
+            // Determine which glyphDict to use for this level
+            let glyphDictToUse = state.glyphDict; // default
+            
+            // Check if this level has a specific glyphDict stored on it
+            if (level.glyphDict) {
+                glyphDictToUse = level.glyphDict;
+            }
+            
+            let o = levelFromString(state, level, glyphDictToUse);
+            o.glyphDict = glyphDictToUse;
             processedLevels.push(o);
         }
     }
@@ -2229,6 +2307,8 @@ function concretizePropertyRule(state, rule, lineNumber) {
 
     // we can't manage this if they're being used to disambiguate
     let ambiguousProperties = {};
+    // Track linked directional property pairs: RHS property -> LHS property
+    let linkedDirectionalPairs = {};
 
     for (let j = 0; j < rule.rhs.length; j++) {
         let row_l = rule.lhs[j];
@@ -2239,7 +2319,26 @@ function concretizePropertyRule(state, rule, lineNumber) {
             for (let prop_n = 0; prop_n < properties_r.length; prop_n++) {
                 let property = properties_r[prop_n];
                 if (properties_l.indexOf(property) === -1) {
-                    ambiguousProperties[property] = true;
+                    // Check if this RHS property is a directional variant of any LHS property
+                    let linkedLHS = null;
+                    if (state.directionalPropertyLinks && state.directionalPropertyLinks[property]) {
+                        let variants = state.directionalPropertyLinks[property];
+                        for (let lIdx = 0; lIdx < properties_l.length; lIdx++) {
+                            if (variants.indexOf(properties_l[lIdx]) !== -1) {
+                                linkedLHS = properties_l[lIdx];
+                                break;
+                            }
+                        }
+                    } else {
+                    }
+                    if (linkedLHS) {
+                        linkedDirectionalPairs[property] = linkedLHS;
+                        // Force the LHS property to be expanded even if it's single-layer,
+                        // so the linked RHS variant can be concretized at the same time
+                        ambiguousProperties[linkedLHS] = true;
+                    } else {
+                        ambiguousProperties[property] = true;
+                    }
                 }
             }
         }
@@ -2292,6 +2391,20 @@ function concretizePropertyRule(state, rule, lineNumber) {
                             concretizePropertyInCell(newrule.lhs[j][k], property, concreteType);
                             if (newrule.rhs.length > 0) {
                                 concretizePropertyInCell(newrule.rhs[j][k], property, concreteType); //do for the corresponding rhs cell as well
+
+                                // Also concretize linked directional variant properties on RHS
+                                for (let linkedRHS of Object.keys(linkedDirectionalPairs)) {
+                                    if (linkedDirectionalPairs[linkedRHS] === property) {
+                                        let lhsAliases = state.propertiesDict[property];
+                                        let rhsAliases = state.propertiesDict[linkedRHS];
+                                        if (lhsAliases && rhsAliases) {
+                                            let memberIndex = lhsAliases.indexOf(concreteType);
+                                            if (memberIndex !== -1 && memberIndex < rhsAliases.length) {
+                                                concretizePropertyInCell(newrule.rhs[j][k], linkedRHS, rhsAliases[memberIndex]);
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             if (newrule.propertyReplacement[property] === undefined) {
@@ -2334,6 +2447,20 @@ function concretizePropertyRule(state, rule, lineNumber) {
                     for (let k = 0; k < cellRow_rhs.length; k++) {
                         let cell = cellRow_rhs[k];
                         concretizePropertyInCell(cell, property, concreteType);
+
+                        // Also concretize linked directional variants in other cells
+                        for (let linkedRHS of Object.keys(linkedDirectionalPairs)) {
+                            if (linkedDirectionalPairs[linkedRHS] === property) {
+                                let lhsAliases = state.propertiesDict[property];
+                                let rhsAliases = state.propertiesDict[linkedRHS];
+                                if (lhsAliases && rhsAliases) {
+                                    let memberIndex = lhsAliases.indexOf(concreteType);
+                                    if (memberIndex !== -1 && memberIndex < rhsAliases.length) {
+                                        concretizePropertyInCell(cell, linkedRHS, rhsAliases[memberIndex]);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4065,6 +4192,10 @@ function loadFile(str) {
     // Auto-generate missing collection directions
     autoGenerateCollectionDirections(state);
 
+    // Build directional property links for collection variants
+    // This allows concretizePropertyRule to match e.g. player_set_right on LHS with player_set_up on RHS
+    buildDirectionalPropertyLinks(state);
+
     // Process legend lines in levels section BEFORE generateExtraMembers
     // so that glyphDict is built with all legend definitions
     preprocessLegendLinesInLevels(state);
@@ -4074,6 +4205,10 @@ function loadFile(str) {
 
     generateExtraMembers(state);
     generateMasks(state);
+    
+    // Generate level-specific glyphDicts based on levelLegendStates
+    generateLevelGlyphDicts(state);
+    
     levelsToArray(state);
     rulesToArray(state);
     if (state.invalid > 0) {
